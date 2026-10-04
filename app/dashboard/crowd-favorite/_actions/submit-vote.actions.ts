@@ -1,20 +1,19 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
-  CROWD_FAVORITES_COLLECTION,
-  CROWD_FAVORITE_VOTES_SUBCOLLECTION,
+  CROWD_FAVORITE_VOTES_TABLE,
   DASHBOARD_CROWD_FAVORITE_PATH,
   DASHBOARD_PATH,
   LOGIN_PATH,
   PARTICIPANT,
 } from "@/constants";
-import { getAuthenticatedUser, getConfigDocSnapshot, getSecretsDocSnapshot, requireRole } from "@/lib";
-import type { ActionResult, Vote, WildHacksConfig, WildHacksSecrets } from "@/types";
+import { getAuthenticatedUser, getConfig, getSecrets, requireRole } from "@/lib";
+import type { ActionResult } from "@/types";
 
-import { getUserVotedProjectId } from "../_lib";
+import { getCrowdFavoriteProject } from "../_lib";
 import { crowdFavoriteVoteFormSchema, type CrowdFavoriteVoteFormSchema } from "../_schemas/vote-form.schemas";
 import { isCrowdFavoriteVotingOpen } from "../constants";
 
@@ -30,12 +29,7 @@ const submitCrowdFavoriteVote = async (
     const roleCheck = requireRole(caller, PARTICIPANT);
     if (roleCheck) return roleCheck;
 
-    const [configDocSnapshot, secretsDocSnapshot] = await Promise.all([
-      getConfigDocSnapshot(),
-      getSecretsDocSnapshot(),
-    ]);
-    const config = configDocSnapshot.data() as WildHacksConfig;
-    const secrets = secretsDocSnapshot.data() as WildHacksSecrets;
+    const [config, secrets] = await Promise.all([getConfig(), getSecrets()]);
 
     if (!(await isCrowdFavoriteVotingOpen(config))) {
       return { success: false, error: "Voting is not open right now" };
@@ -63,39 +57,21 @@ const submitCrowdFavoriteVote = async (
       };
     }
 
-    const db = getFirestore();
     const now = Date.now();
 
-    const selectedProjectRef = db.collection(CROWD_FAVORITES_COLLECTION).doc(data.selected_project_id);
+    const selectedProject = await getCrowdFavoriteProject(data.selected_project_id);
+    if (!selectedProject) {
+      throw new Error("Selected project no longer exists");
+    }
 
-    // Find any existing vote outside the transaction (collection group query can't run inside one)
-    const previousVotedProjectId = await getUserVotedProjectId(caller.id);
-    const previousVoteRef =
-      previousVotedProjectId && previousVotedProjectId !== data.selected_project_id
-        ? db
-            .collection(CROWD_FAVORITES_COLLECTION)
-            .doc(previousVotedProjectId)
-            .collection(CROWD_FAVORITE_VOTES_SUBCOLLECTION)
-            .doc(caller.id)
-        : null;
-
-    await db.runTransaction(async (transaction) => {
-      const selectedProjectSnapshot = await transaction.get(selectedProjectRef);
-      if (!selectedProjectSnapshot.exists) {
-        throw new Error("Selected project no longer exists");
-      }
-
-      if (previousVoteRef) {
-        transaction.delete(previousVoteRef);
-      }
-
-      const newVoteRef = selectedProjectRef.collection(CROWD_FAVORITE_VOTES_SUBCOLLECTION).doc(caller.id);
-
-      transaction.set(newVoteRef, {
-        id: caller.id,
-        created_at: now,
-      } as Vote);
-    });
+    // The primary key on user_id allows one vote per user, so the upsert replaces any previous vote.
+    const { error: voteError } = await supabaseAdmin
+      .from(CROWD_FAVORITE_VOTES_TABLE)
+      .upsert(
+        { user_id: caller.id, crowd_favorite_id: data.selected_project_id, created_at: now },
+        { onConflict: "user_id" }
+      );
+    if (voteError) throw voteError;
 
     revalidatePath(DASHBOARD_CROWD_FAVORITE_PATH);
     revalidatePath(DASHBOARD_PATH);

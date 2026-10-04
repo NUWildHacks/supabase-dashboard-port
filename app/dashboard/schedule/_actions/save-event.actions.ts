@@ -1,8 +1,7 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import { ADMIN, DASHBOARD_SCHEDULE_PATH, EVENTS_COLLECTION, FIFTEEN_MINUTES, LOGIN_PATH } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { ADMIN, DASHBOARD_SCHEDULE_PATH, EVENTS_TABLE, FIFTEEN_MINUTES, LOGIN_PATH } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult, WildHacksConfig } from "@/types";
 
@@ -22,7 +21,6 @@ export const saveEvent = async (
   wildHacksEndTime: WildHacksConfig["end_time"],
   eventId?: Event["id"]
 ): Promise<SaveEventResult> => {
-  const db = getFirestore();
   const now = Date.now();
 
   try {
@@ -67,22 +65,21 @@ export const saveEvent = async (
     }
 
     if (eventId) {
-      await db
-        .collection(EVENTS_COLLECTION)
-        .doc(eventId)
+      const { error } = await supabaseAdmin
+        .from(EVENTS_TABLE)
         .update({
           ...data,
           updated_at: now,
-        });
+        })
+        .eq("id", eventId);
+      if (error) throw error;
     } else {
-      await db
-        .collection(EVENTS_COLLECTION)
-        .doc()
-        .set({
-          ...data,
-          created_at: now,
-          updated_at: now,
-        });
+      const { error } = await supabaseAdmin.from(EVENTS_TABLE).insert({
+        ...data,
+        created_at: now,
+        updated_at: now,
+      });
+      if (error) throw error;
     }
 
     return { success: true };

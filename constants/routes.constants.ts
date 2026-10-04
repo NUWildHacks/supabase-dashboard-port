@@ -16,6 +16,9 @@ export const DASHBOARD_MENTORING_PATH = "/dashboard/mentoring" as const;
 export const DASHBOARD_TEAM_MATCHING_PATH = "/dashboard/team-matching" as const;
 
 export const LOGIN_PATH = "/login" as const;
+export const AUTH_CALLBACK_PATH = "/auth/callback" as const;
+export const LOGIN_CLOSED_ERROR = "closed" as const;
+export const LOGIN_FAILED_ERROR = "failed" as const;
 
 export const PROTECTED_ROUTES = [
   REGISTRATION_PATH,

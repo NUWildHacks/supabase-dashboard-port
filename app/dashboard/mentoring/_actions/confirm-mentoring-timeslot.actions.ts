@@ -1,15 +1,9 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
-import {
-  DASHBOARD_MENTORING_PATH,
-  JUDGE_AND_MENTOR,
-  LOGIN_PATH,
-  MENTORING_TIMESLOTS,
-  USERS_COLLECTION,
-} from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { DASHBOARD_MENTORING_PATH, JUDGE_AND_MENTOR, LOGIN_PATH, MENTORING_TIMESLOTS, USERS_TABLE } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult, MentoringTimeslot } from "@/types";
 
@@ -20,7 +14,6 @@ export type ConfirmMentoringTimeslotResult = ActionResult;
 export const confirmMentoringTimeslot = async (
   selectedMentoringTimeslot: MentoringTimeslot
 ): Promise<ConfirmMentoringTimeslotResult> => {
-  const db = getFirestore();
   const now = Date.now();
 
   try {
@@ -38,10 +31,14 @@ export const confirmMentoringTimeslot = async (
       return { success: false, error: "Invalid mentoring timeslot selected." };
     }
 
-    await db.collection(USERS_COLLECTION).doc(user.id).update({
-      mentoring_timeslot: selectedMentoringTimeslot,
-      updated_at: now,
-    });
+    const { error } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .update({
+        mentoring_timeslot: selectedMentoringTimeslot,
+        updated_at: now,
+      })
+      .eq("id", user.id);
+    if (error) throw error;
 
     revalidatePath(DASHBOARD_MENTORING_PATH);
 

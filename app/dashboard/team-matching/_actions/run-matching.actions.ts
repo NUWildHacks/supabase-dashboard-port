@@ -1,32 +1,30 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
+import supabaseAdmin from "@/config/supabase-admin";
 import {
   ADMIN,
   DASHBOARD_PATH,
   LOGIN_PATH,
-  TEAM_MATCHING_FORMATIONS_COLLECTION,
-  TEAM_MATCHING_FORMATIONS_COLLECTION_PROD,
-  TEAM_MATCHING_INTAKE_COLLECTION,
-  TEAM_MATCHING_INTAKE_COLLECTION_DEV,
-  TEAM_MATCHING_RUNS_COLLECTION,
-  TEAM_MATCHING_RUNS_COLLECTION_PROD,
-  TEAM_MATCHING_SETTINGS_DOC,
-  TEAM_MATCHING_TEAMS_COLLECTION,
-  TEAM_MATCHING_TEAMS_COLLECTION_PROD,
-  USERS_COLLECTION,
-  WILDHACKS_COLLECTION,
-  WILDHACKS_CONFIG_DOC,
+  TEAM_MATCHING_FORMATIONS_TABLE,
+  TEAM_MATCHING_FORMATIONS_TABLE_PROD,
+  TEAM_MATCHING_INTAKE_TABLE,
+  TEAM_MATCHING_INTAKE_TABLE_DEV,
+  TEAM_MATCHING_RUNS_TABLE,
+  TEAM_MATCHING_RUNS_TABLE_PROD,
+  TEAM_MATCHING_SETTINGS_TABLE,
+  TEAM_MATCHING_TEAMS_TABLE,
+  TEAM_MATCHING_TEAMS_TABLE_PROD,
+  USERS_TABLE,
+  WILDHACKS_CONFIG_TABLE,
 } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { fromRow, getAuthenticatedUser, requireRole } from "@/lib";
 import type {
   ActionResult,
   IntakeRecord,
+  TeamMatchingMode,
   TeamMatchingRun,
   TeamMatchingRunStats,
   TeamMatchingSettings,
-  WildHacksConfig,
 } from "@/types";
 import { DEFAULT_TEAM_MATCHING_SETTINGS } from "@/types";
 
@@ -39,6 +37,9 @@ export type RunMatchingResult = ActionResult & {
   warningCount?: number;
 };
 
+// Keep each `.in()` filter short enough for the request URL.
+const USER_LOOKUP_CHUNK_SIZE = 200;
+
 export const runMatching = async (name?: string): Promise<RunMatchingResult> => {
   try {
     const redirectPath = `${LOGIN_PATH}?redirect=${encodeURIComponent(DASHBOARD_PATH)}`;
@@ -46,49 +47,57 @@ export const runMatching = async (name?: string): Promise<RunMatchingResult> => 
     const roleCheck = requireRole(user, ADMIN);
     if (roleCheck) return roleCheck;
 
-    const db = getFirestore();
-
     // Fetch config and settings in parallel
-    const [configSnap, settingsSnap] = await Promise.all([
-      db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_CONFIG_DOC).get(),
-      db.collection(WILDHACKS_COLLECTION).doc(TEAM_MATCHING_SETTINGS_DOC).get(),
+    const [configResult, settingsResult] = await Promise.all([
+      supabaseAdmin.from(WILDHACKS_CONFIG_TABLE).select("team_matching_mode").eq("id", "config").maybeSingle(),
+      supabaseAdmin.from(TEAM_MATCHING_SETTINGS_TABLE).select().eq("id", "team_matching_settings").maybeSingle(),
     ]);
+    if (configResult.error) throw configResult.error;
+    if (settingsResult.error) throw settingsResult.error;
 
-    const config = configSnap.data() as WildHacksConfig | undefined;
-    const mode = config?.team_matching_mode ?? "dev";
-    const intakeCollection = mode === "prod" ? TEAM_MATCHING_INTAKE_COLLECTION : TEAM_MATCHING_INTAKE_COLLECTION_DEV;
-    const runsCollection = mode === "prod" ? TEAM_MATCHING_RUNS_COLLECTION_PROD : TEAM_MATCHING_RUNS_COLLECTION;
-    const teamsCollection = mode === "prod" ? TEAM_MATCHING_TEAMS_COLLECTION_PROD : TEAM_MATCHING_TEAMS_COLLECTION;
-    const formationsCollection =
-      mode === "prod" ? TEAM_MATCHING_FORMATIONS_COLLECTION_PROD : TEAM_MATCHING_FORMATIONS_COLLECTION;
+    const mode: TeamMatchingMode = (configResult.data?.team_matching_mode as TeamMatchingMode | undefined) ?? "dev";
+    const intakeTable = mode === "prod" ? TEAM_MATCHING_INTAKE_TABLE : TEAM_MATCHING_INTAKE_TABLE_DEV;
+    const runsTable = mode === "prod" ? TEAM_MATCHING_RUNS_TABLE_PROD : TEAM_MATCHING_RUNS_TABLE;
+    const teamsTable = mode === "prod" ? TEAM_MATCHING_TEAMS_TABLE_PROD : TEAM_MATCHING_TEAMS_TABLE;
+    const formationsTable = mode === "prod" ? TEAM_MATCHING_FORMATIONS_TABLE_PROD : TEAM_MATCHING_FORMATIONS_TABLE;
 
-    const settings: TeamMatchingSettings = settingsSnap.exists
-      ? { ...DEFAULT_TEAM_MATCHING_SETTINGS, ...(settingsSnap.data() as Partial<TeamMatchingSettings>) }
-      : DEFAULT_TEAM_MATCHING_SETTINGS;
+    let settings: TeamMatchingSettings = DEFAULT_TEAM_MATCHING_SETTINGS;
+    if (settingsResult.data) {
+      const settingsRow: Record<string, unknown> = { ...settingsResult.data };
+      delete settingsRow.id;
+      settings = { ...DEFAULT_TEAM_MATCHING_SETTINGS, ...fromRow<Partial<TeamMatchingSettings>>(settingsRow) };
+    }
 
-    // Fetch all intake docs from the active collection
-    const intakeSnaps = await db.collection(intakeCollection).get();
+    // Fetch all intake rows from the active table
+    const { data: intakeRows, error: intakeError } = await supabaseAdmin.from(intakeTable).select();
+    if (intakeError) throw intakeError;
 
     // Fetch user display names
-    const userIds = intakeSnaps.docs.map((d) => d.id);
-    const userRefs = userIds.map((id) => db.collection(USERS_COLLECTION).doc(id));
-    const userDocs = userRefs.length > 0 ? await db.getAll(...userRefs) : [];
+    const userIds = (intakeRows ?? []).map((row) => row.user_id as string);
+    const userRows: { id: string; first_name: string | null; last_name: string | null; gender: string | null }[] = [];
+    for (let i = 0; i < userIds.length; i += USER_LOOKUP_CHUNK_SIZE) {
+      const { data, error } = await supabaseAdmin
+        .from(USERS_TABLE)
+        .select("id, first_name, last_name, gender")
+        .in("id", userIds.slice(i, i + USER_LOOKUP_CHUNK_SIZE));
+      if (error) throw error;
+      userRows.push(...(data ?? []));
+    }
+    const userMap = new Map(userRows.map((row) => [row.id, row]));
     const nameMap = new Map(
-      userDocs.map((doc) => [
-        doc.id,
-        doc.exists ? `${doc.data()?.first_name ?? ""} ${doc.data()?.last_name ?? ""}`.trim() : "Unknown",
-      ])
+      userIds.map((id) => {
+        const row = userMap.get(id);
+        return [id, row ? `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() : "Unknown"];
+      })
     );
-    const genderMap = new Map(
-      userDocs.map((doc) => [doc.id, doc.exists ? (doc.data()?.gender as string | undefined) : undefined])
-    );
+    const genderMap = new Map(userIds.map((id) => [id, userMap.get(id)?.gender ?? undefined]));
 
     // Build IntakeRecord array
-    const intakes: IntakeRecord[] = intakeSnaps.docs.map((doc) => {
-      const d = doc.data();
+    const intakes: IntakeRecord[] = (intakeRows ?? []).map((d) => {
+      const userId = d.user_id as string;
       return {
-        user_id: doc.id,
-        name: nameMap.get(doc.id) ?? "Unknown",
+        user_id: userId,
+        name: nameMap.get(userId) ?? "Unknown",
         experience_level: d.experience_level ?? "beginner",
         preferred_roles: d.preferred_roles ?? [],
         skills: d.skills ?? {},
@@ -96,7 +105,7 @@ export const runMatching = async (name?: string): Promise<RunMatchingResult> => 
         preferred_team_size: d.preferred_team_size ?? 4,
         required_teammates: d.required_teammates ?? [],
         additional_notes: d.additional_notes ?? "",
-        gender: genderMap.get(doc.id),
+        gender: genderMap.get(userId),
         gender_preference: d.gender_preference ?? "no_preference",
         where_staying: d.where_staying ?? "unsure",
       };
@@ -115,8 +124,7 @@ export const runMatching = async (name?: string): Promise<RunMatchingResult> => 
     }
 
     const now = Date.now();
-    const runRef = db.collection(runsCollection).doc();
-    const runId = runRef.id;
+    const runId = crypto.randomUUID();
 
     const stats: TeamMatchingRunStats = {
       total_participants: intakes.length,
@@ -128,59 +136,60 @@ export const runMatching = async (name?: string): Promise<RunMatchingResult> => 
       invalid_cluster_count: result.warnings.filter((w) => w.type === "oversized_cluster").length,
     };
 
-    // Build primary team docs with stable IDs
-    const teamDocs: { id: string; data: object }[] = result.teams.map((team) => {
-      const teamRef = db.collection(teamsCollection).doc();
-      return { id: teamRef.id, data: { ...team, id: teamRef.id, run_id: runId } };
+    // Build primary team rows with stable IDs
+    const teamRows = result.teams.map((team) => ({
+      id: crypto.randomUUID(),
+      run_id: runId,
+      members: team.members,
+      score: team.score,
+      match_reasons: team.match_reasons,
+      where_to_meet: team.where_to_meet,
+      notes: team.notes,
+    }));
+
+    // Build alternative formation rows (up to 2 runner-up results)
+    const formationRows = result.alternatives.slice(0, 2).map((alt, i) => {
+      const formationIndex = (i + 1) as 1 | 2;
+      const teams = alt.teams.map((team, j) => ({
+        ...team,
+        id: `${runId}_alt${formationIndex}_${j}`,
+        run_id: runId,
+      }));
+      return {
+        id: `${runId}_alt${formationIndex}`,
+        run_id: runId,
+        formation_index: formationIndex,
+        teams,
+        fingerprint: alt.fingerprint,
+      };
     });
 
-    // Build alternative formation docs (up to 2 runner-up results)
-    const formationDocs: { ref: FirebaseFirestore.DocumentReference; data: object }[] = result.alternatives
-      .slice(0, 2)
-      .map((alt, i) => {
-        const formationIndex = (i + 1) as 1 | 2;
-        const teams = alt.teams.map((team, j) => ({
-          ...team,
-          id: `${runId}_alt${formationIndex}_${j}`,
-          run_id: runId,
-        }));
-        return {
-          ref: db.collection(formationsCollection).doc(`${runId}_alt${formationIndex}`),
-          data: { run_id: runId, formation_index: formationIndex, teams, fingerprint: alt.fingerprint },
-        };
-      });
+    // Insert the run first so the team and formation rows can reference it
+    const { error: runError } = await supabaseAdmin.from(runsTable).insert({
+      id: runId,
+      run_at: now,
+      run_by: user.id,
+      name: name?.trim() || null,
+      is_top: false,
+      fingerprint: result.fingerprint,
+      status: "draft",
+      settings_snapshot: settings,
+      warnings: result.warnings,
+      stats,
+    });
+    if (runError) throw runError;
 
-    // Batch-write in chunks of 400
-    const allWrites: { ref: FirebaseFirestore.DocumentReference; data: object }[] = [
-      {
-        ref: runRef,
-        data: {
-          id: runId,
-          run_at: now,
-          run_by: user.id,
-          name: name?.trim() || null,
-          is_top: false,
-          fingerprint: result.fingerprint,
-          status: "draft",
-          settings_snapshot: settings,
-          warnings: result.warnings,
-          stats,
-        },
-      },
-      ...teamDocs.map(({ id, data }) => ({
-        ref: db.collection(teamsCollection).doc(id),
-        data,
-      })),
-      ...formationDocs,
-    ];
+    const { error: teamsError } =
+      teamRows.length > 0 ? await supabaseAdmin.from(teamsTable).insert(teamRows) : { error: null };
+    const { error: formationsError } =
+      !teamsError && formationRows.length > 0
+        ? await supabaseAdmin.from(formationsTable).insert(formationRows)
+        : { error: null };
 
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < allWrites.length; i += CHUNK_SIZE) {
-      const batch = db.batch();
-      for (const { ref, data } of allWrites.slice(i, i + CHUNK_SIZE)) {
-        batch.set(ref, data);
-      }
-      await batch.commit();
+    if (teamsError || formationsError) {
+      // Remove the partial run (deleting the run row cascades to its teams and formations)
+      await supabaseAdmin.from(runsTable).delete().eq("id", runId);
+      throw teamsError ?? formationsError;
     }
 
     const run: TeamMatchingRun = {

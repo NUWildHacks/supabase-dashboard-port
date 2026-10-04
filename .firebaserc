@@ -1,9 +1,0 @@
-{
-  "projects": {
-    "default": "wildhacks-dashboard-2026-dev",
-    "development": "wildhacks-dashboard-2026-dev",
-    "production": "wildhacks-dashboard-2026-prod"
-  },
-  "targets": {},
-  "etags": {}
-}

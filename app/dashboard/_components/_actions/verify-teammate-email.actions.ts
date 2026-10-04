@@ -1,8 +1,7 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import { USERS_COLLECTION, LOGIN_PATH, DASHBOARD_PATH, PARTICIPANT } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { USERS_TABLE, LOGIN_PATH, DASHBOARD_PATH, PARTICIPANT } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 
 export type VerifyTeammateEmailResult =
@@ -10,8 +9,6 @@ export type VerifyTeammateEmailResult =
   | { success: false; error: string };
 
 export const verifyTeammateEmail = async (email: string): Promise<VerifyTeammateEmailResult> => {
-  const db = getFirestore();
-
   try {
     const redirectPath = `${LOGIN_PATH}?redirect=${encodeURIComponent(DASHBOARD_PATH)}`;
     const caller = await getAuthenticatedUser(redirectPath);
@@ -19,18 +16,19 @@ export const verifyTeammateEmail = async (email: string): Promise<VerifyTeammate
     const roleCheck = requireRole(caller, PARTICIPANT);
     if (roleCheck) return roleCheck as { success: false; error: string };
 
-    const snapshot = await db
-      .collection(USERS_COLLECTION)
-      .where("email", "==", email.toLowerCase().trim())
+    const { data: user, error } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("id, first_name")
+      .eq("email", email.toLowerCase().trim())
       .limit(1)
-      .get();
+      .maybeSingle();
+    if (error) throw error;
 
-    if (snapshot.empty) {
+    if (!user) {
       return { success: false, error: "No registered participant found with this email." };
     }
 
-    const doc = snapshot.docs[0];
-    return { success: true, name: doc.data().first_name as string, userId: doc.id };
+    return { success: true, name: user.first_name as string, userId: user.id };
   } catch (error) {
     const detailedError = error instanceof Error ? error.message : "An unknown error occurred";
     console.error("Teammate email verification error:", detailedError);

@@ -1,8 +1,7 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import { DASHBOARD_CROWD_FAVORITE_PATH, LOGIN_PATH, PARTICIPANT, USERS_COLLECTION } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { DASHBOARD_CROWD_FAVORITE_PATH, LOGIN_PATH, PARTICIPANT, USERS_TABLE } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 
 import { getCrowdFavoriteProjectForUser } from "../_lib";
@@ -12,8 +11,6 @@ type VerifyTeamMemberEmailResult =
   | { success: false; error: string };
 
 const verifyTeamMemberEmail = async (email: string): Promise<VerifyTeamMemberEmailResult> => {
-  const db = getFirestore();
-
   try {
     const redirectPath = `${LOGIN_PATH}?redirect=${encodeURIComponent(DASHBOARD_CROWD_FAVORITE_PATH)}`;
     const caller = await getAuthenticatedUser(redirectPath);
@@ -30,19 +27,23 @@ const verifyTeamMemberEmail = async (email: string): Promise<VerifyTeamMemberEma
       return { success: false, error: "Do not add your own email as a teammate" };
     }
 
-    const userDocSnapshots = await db.collection(USERS_COLLECTION).where("email", "==", normalizedEmail).limit(1).get();
+    const { data: member, error } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("id, role, first_name")
+      .eq("email", normalizedEmail)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
 
-    if (userDocSnapshots.empty) {
+    if (!member) {
       return { success: false, error: "No participant found for this email" };
     }
-
-    const member = userDocSnapshots.docs[0].data();
 
     if (member.role !== PARTICIPANT) {
       return { success: false, error: "Only participants can be added to crowd favorite teams" };
     }
 
-    if (await getCrowdFavoriteProjectForUser(userDocSnapshots.docs[0].id)) {
+    if (await getCrowdFavoriteProjectForUser(member.id)) {
       return { success: false, error: "This participant is already assigned to another crowd favorite project" };
     }
 

@@ -1,10 +1,10 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { redirect } from "next/navigation";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
-  USERS_COLLECTION,
+  USERS_TABLE,
   LOGIN_PATH,
   PARTICIPANT,
   ADMIN,
@@ -15,11 +15,13 @@ import {
 } from "@/constants";
 import type { ActionResult, JudgeUser, JudgeAndMentorUser, User } from "@/types";
 
+import { fromRow } from "./db.lib";
+
 import { verifySession } from ".";
 
 /**
  * Get the authenticated user data.
- * Verifies the session and retrieves the user document from Firestore.
+ * Verifies the session and retrieves the user row from the database.
  * Redirects to login if session is invalid, or to registration if user document doesn't exist.
  *
  * @param redirectPath - Optional path to redirect to if session is invalid (defaults to LOGIN_PATH)
@@ -41,10 +43,9 @@ const getAuthenticatedUser = async (redirectPath?: string): Promise<User> => {
 
   const { id } = userInfo;
 
-  const db = getFirestore();
-
-  const userDocSnapshot = await db.collection(USERS_COLLECTION).doc(userInfo.id).get();
-  if (!userDocSnapshot.exists) redirect(REGISTRATION_PATH);
+  const { data: userRow, error } = await supabaseAdmin.from(USERS_TABLE).select().eq("id", id).maybeSingle();
+  if (error) throw error;
+  if (!userRow) redirect(REGISTRATION_PATH);
 
   // check if this is a Kris-special permission participant
   // We would've filled out a document for them with their email,
@@ -54,7 +55,7 @@ const getAuthenticatedUser = async (redirectPath?: string): Promise<User> => {
 
   // checks if the document was created AFTER we closed
   // permission code registration (Mar 10)
-  const userData = userDocSnapshot.data()!;
+  const userData = fromRow<Omit<User, "id">>(userRow);
 
   if (
     userData.role === PARTICIPANT &&
@@ -138,21 +139,26 @@ const requireRole = (
  * ```
  */
 const onboardUser = async (id: User["id"]): Promise<boolean> => {
-  const db = getFirestore();
   const now = Date.now();
 
-  const judgeDocSnapshot = await db.collection(USERS_COLLECTION).doc(id).get();
-  if (!judgeDocSnapshot.exists) return true;
-  const { onboarded } = judgeDocSnapshot.data() as Omit<JudgeUser | JudgeAndMentorUser, "id">;
+  const { data: judgeRow, error } = await supabaseAdmin
+    .from(USERS_TABLE)
+    .select("onboarded")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!judgeRow) return true;
+  const { onboarded } = judgeRow as Pick<JudgeUser | JudgeAndMentorUser, "onboarded">;
 
   if (!onboarded) {
-    await db
-      .collection(USERS_COLLECTION)
-      .doc(id)
+    const { error: updateError } = await supabaseAdmin
+      .from(USERS_TABLE)
       .update({
         onboarded: true,
         updated_at: now,
-      } as Partial<JudgeUser | JudgeAndMentorUser>);
+      } as Partial<JudgeUser | JudgeAndMentorUser>)
+      .eq("id", id);
+    if (updateError) throw updateError;
 
     return false;
   }

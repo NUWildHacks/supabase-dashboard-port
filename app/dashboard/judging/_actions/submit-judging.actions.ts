@@ -1,25 +1,21 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
   LOGIN_PATH,
   DASHBOARD_JUDGING_ROUND_1_PATH,
   JUDGE,
-  PROJECTS_COLLECTION,
-  JUDGING_ASSIGNMENTS_COLLECTION,
+  PROJECTS_TABLE,
+  JUDGING_ASSIGNMENTS_TABLE,
   DASHBOARD_JUDGING_ROUND_2_PATH,
   JUDGE_AND_MENTOR,
-  PLACEHOLDER_DOC,
-  ROUND_1_COLLECTION,
-  ROUND_2_COLLECTION,
 } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult, JudgeUser } from "@/types";
 
 import { type JudgingFormSchema } from "../_schemas";
-import { ROUND_1 } from "../constants";
 import type { JudgingAssignment, JudgingForm, JudgingRound, Project } from "../types";
 
 export type SubmitJudgingResult = ActionResult<JudgingFormSchema>;
@@ -32,7 +28,6 @@ export const submitJudging = async (
   currentPath: string,
   judgingRound: JudgingRound
 ): Promise<SubmitJudgingResult> => {
-  const db = getFirestore();
   const now = Date.now();
 
   if (currentPath !== DASHBOARD_JUDGING_ROUND_1_PATH && currentPath !== DASHBOARD_JUDGING_ROUND_2_PATH) {
@@ -56,47 +51,48 @@ export const submitJudging = async (
       };
     }
 
-    const projectDocSnapshot = await db
-      .collection(PROJECTS_COLLECTION)
-      .doc(PLACEHOLDER_DOC)
-      .collection(judgingRound === ROUND_1 ? ROUND_1_COLLECTION : ROUND_2_COLLECTION)
-      .doc(projectId)
-      .get();
-    if (!projectDocSnapshot.exists) {
+    const { data: project, error: projectError } = await supabaseAdmin
+      .from(PROJECTS_TABLE)
+      .select("id")
+      .eq("judging_round", judgingRound)
+      .eq("id", projectId)
+      .maybeSingle();
+    if (projectError) throw projectError;
+    if (!project) {
       return {
         success: false,
         error: "Project not found",
       };
     }
 
-    const judgingAssignmentDocSnapshot = await db
-      .collection(JUDGING_ASSIGNMENTS_COLLECTION)
-      .doc(PLACEHOLDER_DOC)
-      .collection(judgingRound === ROUND_1 ? ROUND_1_COLLECTION : ROUND_2_COLLECTION)
-      .doc(assignmentId)
-      .get();
-    if (!judgingAssignmentDocSnapshot.exists) {
+    const { data: judgingAssignment, error: judgingAssignmentError } = await supabaseAdmin
+      .from(JUDGING_ASSIGNMENTS_TABLE)
+      .select("judging_form")
+      .eq("judging_round", judgingRound)
+      .eq("id", assignmentId)
+      .maybeSingle();
+    if (judgingAssignmentError) throw judgingAssignmentError;
+    if (!judgingAssignment) {
       return {
         success: false,
         error: "Judging assignment not found",
       };
     }
 
-    const judgingAssignment = judgingAssignmentDocSnapshot.data() as Omit<JudgingAssignment, "id">;
-    const existingForm = judgingAssignment.judging_form;
+    const existingForm = judgingAssignment.judging_form as JudgingAssignment["judging_form"];
 
-    await db
-      .collection(JUDGING_ASSIGNMENTS_COLLECTION)
-      .doc(PLACEHOLDER_DOC)
-      .collection(judgingRound === ROUND_1 ? ROUND_1_COLLECTION : ROUND_2_COLLECTION)
-      .doc(assignmentId)
+    const { error: updateError } = await supabaseAdmin
+      .from(JUDGING_ASSIGNMENTS_TABLE)
       .update({
         judging_form: {
           ...data,
           created_at: existingForm?.created_at ?? now,
           updated_at: now,
         } as Partial<JudgingForm>,
-      } as Partial<JudgingAssignment>);
+      } as Partial<JudgingAssignment>)
+      .eq("judging_round", judgingRound)
+      .eq("id", assignmentId);
+    if (updateError) throw updateError;
 
     revalidatePath(currentPath);
 

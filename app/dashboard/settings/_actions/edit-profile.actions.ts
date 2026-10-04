@@ -1,11 +1,11 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
-import { USERS_COLLECTION, LOGIN_PATH, DASHBOARD_SETTINGS_PATH } from "@/constants";
-import { getAuthenticatedUser, getConfigDocSnapshot } from "@/lib";
-import type { ActionResult, WildHacksConfig } from "@/types";
+import supabaseAdmin from "@/config/supabase-admin";
+import { USERS_TABLE, LOGIN_PATH, DASHBOARD_SETTINGS_PATH } from "@/constants";
+import { getAuthenticatedUser, getConfig } from "@/lib";
+import type { ActionResult } from "@/types";
 
 import {
   EditAdminProfileFormSchema,
@@ -22,12 +22,10 @@ export const editProfile = async <
 >(
   data: T
 ): Promise<EditProfileResult<T>> => {
-  const db = getFirestore();
   const now = Date.now();
 
   try {
-    const configDocSnapshot = await getConfigDocSnapshot();
-    const { end_time } = configDocSnapshot.data() as WildHacksConfig;
+    const { end_time } = await getConfig();
 
     if (now >= end_time) {
       return {
@@ -39,13 +37,14 @@ export const editProfile = async <
     const redirectPath = `${LOGIN_PATH}?redirect=${encodeURIComponent(DASHBOARD_SETTINGS_PATH)}`;
     const { id: userId } = await getAuthenticatedUser(redirectPath);
 
-    await db
-      .collection(USERS_COLLECTION)
-      .doc(userId)
+    const { error } = await supabaseAdmin
+      .from(USERS_TABLE)
       .update({
         ...data,
         updated_at: now,
-      });
+      })
+      .eq("id", userId);
+    if (error) throw error;
 
     revalidatePath(DASHBOARD_SETTINGS_PATH);
 

@@ -1,19 +1,15 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-import { getStorage } from "firebase-admin/storage";
 import { revalidatePath } from "next/cache";
 
-import { DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT, RESUMES_COLLECTION } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT, RESUMES_BUCKET, RESUMES_TABLE } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import { ActionResult } from "@/types";
 
 import { ResumeMetadata } from "../types";
 
 export const deleteResume = async (): Promise<ActionResult> => {
-  const db = getFirestore();
-  const storage = getStorage();
-
   try {
     const redirectPath = `${LOGIN_PATH}?redirect=${encodeURIComponent(DASHBOARD_PATH)}`;
     const user = await getAuthenticatedUser(redirectPath);
@@ -21,23 +17,25 @@ export const deleteResume = async (): Promise<ActionResult> => {
     const roleError = requireRole(user, PARTICIPANT, "You are not authorized to delete a resume");
     if (roleError) return roleError;
 
-    const bucket = storage.bucket();
+    const { data: resumeRow, error: resumeError } = await supabaseAdmin
+      .from(RESUMES_TABLE)
+      .select()
+      .eq("id", user.id)
+      .maybeSingle();
+    if (resumeError) throw resumeError;
 
-    const resumeRef = db.collection(RESUMES_COLLECTION).doc(user.id);
-    const resumeDocSnapshot = await resumeRef.get();
-
-    if (!resumeDocSnapshot.exists) {
+    if (!resumeRow) {
       return { success: false, error: "Resume not found" };
     }
 
-    const { file_name } = resumeDocSnapshot.data() as Omit<ResumeMetadata, "id">;
+    const { storage_path } = resumeRow as Omit<ResumeMetadata, "id">;
 
-    await bucket.file(file_name).delete();
+    const { error: removeError } = await supabaseAdmin.storage.from(RESUMES_BUCKET).remove([storage_path]);
+    if (removeError) throw removeError;
 
-    try {
-      await resumeRef.delete();
-    } catch (err) {
-      console.error(`Firestore doc ${resumeRef.id} delete failed after storage delete — dangling document:`, err);
+    const { error: deleteError } = await supabaseAdmin.from(RESUMES_TABLE).delete().eq("id", user.id);
+    if (deleteError) {
+      console.error(`Resume row ${user.id} delete failed after storage delete — dangling row:`, deleteError);
     }
 
     revalidatePath(DASHBOARD_PATH);

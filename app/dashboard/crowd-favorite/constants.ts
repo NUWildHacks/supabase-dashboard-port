@@ -1,4 +1,4 @@
-import { getConfigDocSnapshot } from "@/lib";
+import { getConfig } from "@/lib";
 import type { WildHacksConfig } from "@/types";
 
 export const CROWD_FAVORITE_MAX_TEAM_MEMBERS = 4;
@@ -27,8 +27,7 @@ function normalizeCrowdFavoriteState(config: Partial<WildHacksConfig>): CrowdFav
 }
 
 async function getCrowdFavoriteStateConfig(): Promise<CrowdFavoriteState> {
-  const configDocSnapshot = await getConfigDocSnapshot();
-  const config = configDocSnapshot.data() as WildHacksConfig;
+  const config = await getConfig();
   return normalizeCrowdFavoriteState(config);
 }
 

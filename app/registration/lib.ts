@@ -1,44 +1,48 @@
-import { getFirestore } from "firebase-admin/firestore";
 import { redirect } from "next/navigation";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
   DASHBOARD_PATH,
   JUDGE,
   JUDGE_AND_MENTOR,
   PARTICIPANT,
   USER_FIELDS,
-  USERS_COLLECTION,
+  USERS_TABLE,
   CLOSED_REGISTRATION,
 } from "@/constants";
-import { deleteSession } from "@/lib";
+import { deleteSession, fromRow } from "@/lib";
 import { JudgeUser, JudgeAndMentorUser, User } from "@/types";
 
 const getCurrentTimestamp = () => Date.now();
 
 /**
- * Registers a judge or mentor user by migrating their data from an email-based document
- * to a user ID-based document.
+ * Registers a judge or mentor user by migrating their data from an email-based row
+ * to a user ID-based row.
  *
  * This function performs the following operations:
- * 1. Checks if a user document with the given userId already exists (redirects if found)
- * 2. Searches for an existing user document by email
+ * 1. Checks if a user row with the given userId already exists (redirects if found)
+ * 2. Searches for an existing user row by email
  * 3. If found and the user has JUDGE or JUDGE_AND_MENTOR role, migrates the data:
- *    - Creates a new document using the userId as the document ID
- *    - Copies all user data (excluding id, created_at, updated_at)
+ *    - Changes the row ID from the email-based ID to the userId in one atomic update
+ *      (child rows follow through ON UPDATE CASCADE)
+ *    - Keeps all other user data
  *    - Sets new timestamps for created_at and updated_at
- *    - Deletes the old email-based document
  * 4. Redirects to the dashboard after successful migration
  *
- * @param {User["id"]} userId - The unique identifier for the user document
+ * @param {User["id"]} userId - The unique identifier for the user row
  * @param {User["email"]} userEmail - The email address to search for existing user data
  * @throws {RedirectError} Redirects to DASHBOARD_PATH if user already exists or after successful migration
  * @async
  */
 const registerJudgeMentorWithEmail = async (userId: User["id"], userEmail: User["email"]) => {
-  const db = getFirestore();
-  const userDocSnapshotById = await db.collection(USERS_COLLECTION).doc(userId).get();
-  if (userDocSnapshotById.exists) {
-    const userData = userDocSnapshotById.data()!;
+  const { data: userRowById, error: userByIdError } = await supabaseAdmin
+    .from(USERS_TABLE)
+    .select()
+    .eq("id", userId)
+    .maybeSingle();
+  if (userByIdError) throw userByIdError;
+  if (userRowById) {
+    const userData = fromRow<User>(userRowById);
     const isIncompleteParticipant =
       userData.role === PARTICIPANT &&
       userData.created_at > CLOSED_REGISTRATION &&
@@ -50,32 +54,28 @@ const registerJudgeMentorWithEmail = async (userId: User["id"], userEmail: User[
     return;
   }
 
-  const userDocSnapshotByEmail = await db
-    .collection(USERS_COLLECTION)
-    .where(USER_FIELDS.email, "==", userEmail)
-    .limit(1)
-    .get();
-  if (!userDocSnapshotByEmail.empty) {
-    const newJudgeDocRef = db.collection(USERS_COLLECTION).doc(userId);
-
-    const data = userDocSnapshotByEmail.docs[0].data() as Omit<
-      JudgeUser | JudgeAndMentorUser,
-      "id" | "created_at" | "updated_at" | "onboarded"
-    >;
+  const { data: userRowsByEmail, error: userByEmailError } = await supabaseAdmin
+    .from(USERS_TABLE)
+    .select()
+    .eq(USER_FIELDS.email, userEmail)
+    .limit(1);
+  if (userByEmailError) throw userByEmailError;
+  if (userRowsByEmail && userRowsByEmail.length > 0) {
+    const { id: oldId, ...data } = fromRow<JudgeUser | JudgeAndMentorUser>(userRowsByEmail[0]);
 
     if (data?.role === JUDGE || data?.role === JUDGE_AND_MENTOR) {
       const timestamp = getCurrentTimestamp();
 
-      await db.runTransaction(async (transaction) => {
-        transaction.set(newJudgeDocRef, {
-          ...data,
+      const { error: migrateError } = await supabaseAdmin
+        .from(USERS_TABLE)
+        .update({
+          id: userId,
           onboarded: false,
           created_at: timestamp,
           updated_at: timestamp,
-        } as Omit<JudgeUser | JudgeAndMentorUser, "id">);
-
-        transaction.delete(userDocSnapshotByEmail.docs[0].ref);
-      });
+        })
+        .eq("id", oldId);
+      if (migrateError) throw migrateError;
 
       redirect(DASHBOARD_PATH);
     }

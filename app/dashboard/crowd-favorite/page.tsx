@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { ADMIN, DASHBOARD_CROWD_FAVORITE_PATH, DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT } from "@/constants";
-import { getAuthenticatedUser, getConfigDocSnapshot } from "@/lib";
-import type { WildHacksConfig } from "@/types";
+import { getAuthenticatedUser, getConfig } from "@/lib";
 
 import {
   CrowdFavoriteAdminProjectList,
@@ -31,8 +30,7 @@ const CrowdFavoritePage = async () => {
   if (user.role !== PARTICIPANT && user.role !== ADMIN) redirect(DASHBOARD_PATH);
 
   // Fetch config once to pass to all helpers
-  const configDocSnapshot = await getConfigDocSnapshot();
-  const config = configDocSnapshot.data() as WildHacksConfig;
+  const config = await getConfig();
 
   if (user.role === ADMIN) {
     const showVoteCount = await hasCrowdFavoriteVotingStarted(config);

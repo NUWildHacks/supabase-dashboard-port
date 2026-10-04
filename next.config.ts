@@ -19,19 +19,22 @@ const discordInviteDestination = process.env.DISCORD_INVITE_URL as string;
 const discordTeamDestination = process.env.DISCORD_TEAM_URL as string;
 const virtualZoomJudgingDestination = process.env.VIRTUAL_ZOOM_JUDGING_URL as string;
 
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const supabaseWsUrl = supabaseUrl.replace(/^http/, "ws");
+
 const cspHeader = `
   default-src 'self';
-  script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval'" : ""} ${isDev ? "https://vercel.live" : ""} https://*.firebaseapp.com https://apis.google.com;
+  script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval'" : ""} ${isDev ? "https://vercel.live" : ""};
   style-src 'self' ${isDev ? "https://vercel.live" : ""} 'unsafe-inline';
   img-src 'self' ${isDev ? "https://vercel.live https://vercel.com" : ""} blob: data:;
   font-src 'self' ${isDev ? "https://vercel.live https://assets.vercel.com" : ""} data:;
-  connect-src 'self' ${isDev ? "https://vercel.live wss://ws-us3.pusher.com" : ""} https://*.firebaseapp.com https://*.googleapis.com https://github.com;
-  frame-src 'self' ${isDev ? "https://vercel.live" : ""} https://*.firebaseapp.com;
+  connect-src 'self' ${isDev ? "https://vercel.live wss://ws-us3.pusher.com" : ""} ${supabaseUrl} ${supabaseWsUrl};
+  frame-src 'self' ${isDev ? "https://vercel.live" : ""};
   object-src 'none';
   base-uri 'self';
   form-action 'self';
   frame-ancestors 'none';
-  upgrade-insecure-requests;
+  ${isDev ? "" : "upgrade-insecure-requests;"}
 `
   .replace(/\s{2,}/g, " ")
   .trim();

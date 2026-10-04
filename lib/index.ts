@@ -1,4 +1,4 @@
-export { createSession, deleteSession, verifySession } from "./session.lib";
+export { deleteSession, verifySession } from "./session.lib";
 export {
   combineDateAndTime,
   findDayLabel,
@@ -14,12 +14,13 @@ export {
 export { getAuthenticatedUser, requireRole, onboardUser } from "./user.lib";
 export { cn } from "./utils.lib";
 export {
-  firestoreUserIdSchema,
   githubUsernameSchema,
   plainTextMultiLineSchema,
   plainTextSingleLineSchema,
   secureUrlSchema,
+  userIdSchema,
 } from "./validation.lib";
-export { getConfigDocSnapshot, getSecretsDocSnapshot } from "./wildhacks.lib";
+export { getConfig, getSecrets } from "./wildhacks.lib";
 export { calculateStatistics } from "./statistics.lib";
 export { validateRedirectPath } from "./path.lib";
+export { fromRow, fromRows } from "./db.lib";

@@ -1,16 +1,15 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
   ADMIN,
   DASHBOARD_PATH,
   LOGIN_PATH,
-  TEAM_MATCHING_RUNS_COLLECTION,
-  TEAM_MATCHING_RUNS_COLLECTION_PROD,
-  WILDHACKS_COLLECTION,
-  WILDHACKS_CONFIG_DOC,
+  TEAM_MATCHING_RUNS_TABLE,
+  TEAM_MATCHING_RUNS_TABLE_PROD,
+  WILDHACKS_CONFIG_TABLE,
 } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult, TeamMatchingMode } from "@/types";
@@ -22,20 +21,25 @@ export const publishRun = async (runId: string, mode: TeamMatchingMode = "dev"):
     const roleCheck = requireRole(user, ADMIN);
     if (roleCheck) return roleCheck;
 
-    const db = getFirestore();
-    const collection = mode === "prod" ? TEAM_MATCHING_RUNS_COLLECTION_PROD : TEAM_MATCHING_RUNS_COLLECTION;
-    const runRef = db.collection(collection).doc(runId);
-    const runSnap = await runRef.get();
+    const table = mode === "prod" ? TEAM_MATCHING_RUNS_TABLE_PROD : TEAM_MATCHING_RUNS_TABLE;
+    const { data: run, error: runError } = await supabaseAdmin
+      .from(table)
+      .select("status")
+      .eq("id", runId)
+      .maybeSingle();
+    if (runError) throw runError;
 
-    if (!runSnap.exists) return { success: false, error: "Run not found." };
-    if (runSnap.data()?.status !== "draft") return { success: false, error: "Only draft runs can be published." };
+    if (!run) return { success: false, error: "Run not found." };
+    if (run.status !== "draft") return { success: false, error: "Only draft runs can be published." };
 
-    const batch = db.batch();
-    batch.update(runRef, { status: "published" });
-    batch.update(db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_CONFIG_DOC), {
-      active_matching_run_id: runId,
-    });
-    await batch.commit();
+    const { error: publishError } = await supabaseAdmin.from(table).update({ status: "published" }).eq("id", runId);
+    if (publishError) throw publishError;
+
+    const { error: configError } = await supabaseAdmin
+      .from(WILDHACKS_CONFIG_TABLE)
+      .update({ active_matching_run_id: runId })
+      .eq("id", "config");
+    if (configError) throw configError;
 
     revalidatePath(DASHBOARD_PATH);
     return { success: true };

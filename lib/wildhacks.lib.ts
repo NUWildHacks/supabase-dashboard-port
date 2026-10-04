@@ -1,48 +1,54 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
+import supabaseAdmin from "@/config/supabase-admin";
+import { WILDHACKS_CONFIG_TABLE, WILDHACKS_SECRETS_TABLE } from "@/constants";
+import type { WildHacksConfig, WildHacksSecrets } from "@/types";
 
-import { WILDHACKS_COLLECTION, WILDHACKS_CONFIG_DOC, WILDHACKS_SECRETS_DOC } from "@/constants";
+import { fromRow } from "./db.lib";
 
 /**
- * Get the WildHacks configuration document snapshot from Firestore.
- * Throws an error if the document does not exist.
+ * Get the WildHacks configuration.
+ * Throws an error if the configuration row does not exist.
  *
- * @returns Promise resolving to the Firestore document snapshot containing WildHacks configuration
- * @throws {Error} If the configuration document is not found
+ * @returns Promise resolving to the WildHacks configuration
+ * @throws {Error} If the configuration row is not found
  * @example
  * ```ts
- * const configSnapshot = await getConfigDocSnapshot();
- * const config = configSnapshot.data() as WildHacksConfig;
+ * const config = await getConfig();
  * console.log(config.start_time, config.end_time);
  * ```
  */
-const getConfigDocSnapshot = async () => {
-  const db = getFirestore();
+const getConfig = async (): Promise<WildHacksConfig> => {
+  const { data, error } = await supabaseAdmin.from(WILDHACKS_CONFIG_TABLE).select().eq("id", "config").maybeSingle();
 
-  const configDocRef = db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_CONFIG_DOC);
-
-  const configDocSnapshot = await configDocRef.get();
-
-  if (!configDocSnapshot.exists) {
-    throw new Error("WildHacks configuration document not found");
+  if (error) throw error;
+  if (!data) {
+    throw new Error("WildHacks configuration not found");
   }
 
-  return configDocSnapshot;
+  const config = fromRow<WildHacksConfig & { id?: string }>(data);
+  delete config.id;
+  return config;
 };
 
-const getSecretsDocSnapshot = async () => {
-  const db = getFirestore();
+/**
+ * Get the WildHacks secrets (admin-only values such as the crowd favorite password).
+ * Throws an error if the secrets row does not exist.
+ *
+ * @returns Promise resolving to the WildHacks secrets
+ * @throws {Error} If the secrets row is not found
+ */
+const getSecrets = async (): Promise<WildHacksSecrets> => {
+  const { data, error } = await supabaseAdmin.from(WILDHACKS_SECRETS_TABLE).select().eq("id", "secrets").maybeSingle();
 
-  const secretsDocRef = db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_SECRETS_DOC);
-
-  const secretsDocSnapshot = await secretsDocRef.get();
-
-  if (!secretsDocSnapshot.exists) {
-    throw new Error("WildHacks secrets document not found");
+  if (error) throw error;
+  if (!data) {
+    throw new Error("WildHacks secrets not found");
   }
 
-  return secretsDocSnapshot;
+  const secrets = fromRow<WildHacksSecrets & { id?: string }>(data);
+  delete secrets.id;
+  return secrets;
 };
 
-export { getConfigDocSnapshot, getSecretsDocSnapshot };
+export { getConfig, getSecrets };

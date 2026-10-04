@@ -1,49 +1,43 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-import { cookies } from "next/headers";
-
-import firebaseAdmin from "@/config/firebase-admin";
-import {
-  USERS_COLLECTION,
-  SESSION_COOKIE_NAME,
-  SESSION_COOKIE_OPTIONS,
-  SESSION_EXPIRES_IN,
-  JUDGE,
-  JUDGE_AND_MENTOR,
-  PARTICIPANT,
-  USER_FIELDS,
-} from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { USERS_TABLE, JUDGE, JUDGE_AND_MENTOR, PARTICIPANT } from "@/constants";
 import { verifySession } from "@/lib";
 import type { ActionResult } from "@/types";
 
-export const createVerifiedSession = async (idToken: string): Promise<ActionResult> => {
+/**
+ * Check that the signed-in user is allowed to use the dashboard.
+ * A user may continue if they already have a user row, or if an admin pre-created a
+ * row with their email (judges, mentors, and late participants).
+ * Called by the OAuth callback route right after the session is created.
+ *
+ * @returns ActionResult with success: false if registration is closed for this user
+ */
+export const checkUserCanLogin = async (): Promise<ActionResult> => {
   try {
-    const adminAuth = firebaseAdmin.auth();
-    const cookieStore = await cookies();
-
-    const sessionCookie = await adminAuth.createSessionCookie(idToken, { expiresIn: SESSION_EXPIRES_IN });
-    cookieStore.set(SESSION_COOKIE_NAME, sessionCookie, SESSION_COOKIE_OPTIONS);
-
     const userInfo = await verifySession();
     if (!userInfo) {
-      cookieStore.delete(SESSION_COOKIE_NAME);
       return { success: false, error: "Failed to verify session." };
     }
 
-    const db = getFirestore();
-    const userDocSnapshot = await db.collection(USERS_COLLECTION).doc(userInfo.id).get();
+    const { data: userRow, error: userError } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("id")
+      .eq("id", userInfo.id)
+      .maybeSingle();
+    if (userError) throw userError;
 
-    if (!userDocSnapshot.exists) {
-      const emailDocSnapshot = await db
-        .collection(USERS_COLLECTION)
-        .where(USER_FIELDS.email, "==", userInfo.email)
+    if (!userRow) {
+      const { data: emailRow, error: emailError } = await supabaseAdmin
+        .from(USERS_TABLE)
+        .select("role")
+        .eq("email", userInfo.email)
         .limit(1)
-        .get();
+        .maybeSingle();
+      if (emailError) throw emailError;
 
-      const role = emailDocSnapshot.docs[0]?.data()?.role;
-      if (emailDocSnapshot.empty || (role !== JUDGE && role !== JUDGE_AND_MENTOR && role !== PARTICIPANT)) {
-        cookieStore.delete(SESSION_COOKIE_NAME);
+      const role = emailRow?.role;
+      if (!emailRow || (role !== JUDGE && role !== JUDGE_AND_MENTOR && role !== PARTICIPANT)) {
         return { success: false, error: "Registration is closed! Check back in the future for WildHacks 2027." };
       }
     }
@@ -52,8 +46,6 @@ export const createVerifiedSession = async (idToken: string): Promise<ActionResu
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : "An unknown error occurred";
     console.error(errorMessage);
-    const cookieStore = await cookies();
-    cookieStore.delete(SESSION_COOKIE_NAME);
     return { success: false, error: errorMessage };
   }
 };

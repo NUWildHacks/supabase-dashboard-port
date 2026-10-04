@@ -1,29 +1,28 @@
-export const USERS_COLLECTION = "users" as const;
-export const EVENTS_COLLECTION = "events" as const;
-export const PROJECTS_COLLECTION = "projects" as const;
-export const WILDHACKS_COLLECTION = "wildhacks" as const;
-export const JUDGING_ASSIGNMENTS_COLLECTION = "judging_assignments" as const;
-export const TEAM_MATCHING_RUNS_COLLECTION = "team_matching_runs" as const;
-export const TEAM_MATCHING_TEAMS_COLLECTION = "team_matching_teams" as const;
-export const TEAM_MATCHING_FORMATIONS_COLLECTION = "team_matching_formations" as const;
-export const TEAM_MATCHING_SETTINGS_DOC = "team_matching_settings" as const;
-export const EVENT_CHECK_INS_COLLECTION = "event_check_ins" as const;
-export const MEAL_EXCHANGES_COLLECTION = "meal_exchanges" as const;
-export const RESUMES_COLLECTION = "resumes" as const;
+export const USERS_TABLE = "users" as const;
+export const EVENTS_TABLE = "events" as const;
+export const PROJECTS_TABLE = "projects" as const;
+export const JUDGING_ASSIGNMENTS_TABLE = "judging_assignments" as const;
+export const EVENT_CHECK_INS_TABLE = "event_check_ins" as const;
+export const RESUMES_TABLE = "resumes" as const;
 
-export const TEAM_MATCHING_INTAKE_COLLECTION = "team_matching_intake_prod" as const;
-export const CROWD_FAVORITES_COLLECTION = "crowd_favorites" as const;
-export const CROWD_FAVORITE_VOTES_SUBCOLLECTION = "votes" as const;
-export const TEAM_MATCHING_INTAKE_COLLECTION_DEV = "team_matching_intake" as const;
+export const WILDHACKS_CONFIG_TABLE = "wildhacks_config" as const;
+export const WILDHACKS_SECRETS_TABLE = "wildhacks_secrets" as const;
+export const TEAM_MATCHING_SETTINGS_TABLE = "team_matching_settings" as const;
 
-export const TEAM_MATCHING_RUNS_COLLECTION_PROD = "team_matching_runs_prod" as const;
-export const TEAM_MATCHING_TEAMS_COLLECTION_PROD = "team_matching_teams_prod" as const;
-export const TEAM_MATCHING_FORMATIONS_COLLECTION_PROD = "team_matching_formations_prod" as const;
+export const CROWD_FAVORITES_TABLE = "crowd_favorites" as const;
+export const CROWD_FAVORITE_VOTES_TABLE = "crowd_favorite_votes" as const;
 
-export const PLACEHOLDER_DOC = "placeholder" as const;
-export const ROUND_1_COLLECTION = "round_1" as const;
-export const ROUND_2_COLLECTION = "round_2" as const;
+export const TEAM_MATCHING_INTAKE_TABLE = "team_matching_intake_prod" as const;
+export const TEAM_MATCHING_INTAKE_TABLE_DEV = "team_matching_intake" as const;
 
-export const WILDHACKS_CONFIG_DOC = "config" as const;
-export const WILDHACKS_SECRETS_DOC = "secrets" as const;
+export const TEAM_MATCHING_RUNS_TABLE = "team_matching_runs" as const;
+export const TEAM_MATCHING_TEAMS_TABLE = "team_matching_teams" as const;
+export const TEAM_MATCHING_FORMATIONS_TABLE = "team_matching_formations" as const;
+
+export const TEAM_MATCHING_RUNS_TABLE_PROD = "team_matching_runs_prod" as const;
+export const TEAM_MATCHING_TEAMS_TABLE_PROD = "team_matching_teams_prod" as const;
+export const TEAM_MATCHING_FORMATIONS_TABLE_PROD = "team_matching_formations_prod" as const;
+
+export const RESUMES_BUCKET = "resumes" as const;
+
 export const CLOSED_REGISTRATION = 1773205239000 as const;

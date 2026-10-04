@@ -1,13 +1,12 @@
 "use client";
 
-import { doc, onSnapshot } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
 
 import Discord from "@/components/icon/discord";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
-import { db } from "@/config/firebase-client";
-import { DISCORD_TEAM_PATH, WILDHACKS_COLLECTION, WILDHACKS_CONFIG_DOC } from "@/constants";
+import { createSupabaseBrowserClient } from "@/config/supabase-browser";
+import { DISCORD_TEAM_PATH, WILDHACKS_CONFIG_TABLE } from "@/constants";
 import type { TeamSuggestion } from "@/types";
 
 import { getParticipantSuggestions } from "../_actions/get-participant-suggestions.actions";
@@ -38,22 +37,49 @@ export const TeamMatchingGate = ({
   const fetchedRef = useRef(initialSuggestions.length > 0);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, WILDHACKS_COLLECTION, WILDHACKS_CONFIG_DOC), async (snap) => {
-      const newReleased: boolean = snap.data()?.[releasedField] ?? false;
+    const supabase = createSupabaseBrowserClient();
+    let active = true;
+
+    const handleReleased = async (newReleased: boolean) => {
+      if (!active) return;
       setReleased(newReleased);
 
       if (newReleased && hasSubmitted && !fetchedRef.current) {
         fetchedRef.current = true;
         const result = await getParticipantSuggestions();
-        setSuggestions(result);
+        if (active) setSuggestions(result);
       }
 
       if (!newReleased) {
         fetchedRef.current = false;
         setSuggestions([]);
       }
-    });
-    return unsub;
+    };
+
+    const channel = supabase
+      .channel(`team-matching-gate-${releasedField}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: WILDHACKS_CONFIG_TABLE, filter: "id=eq.config" },
+        (payload) => {
+          void handleReleased((payload.new as Record<string, unknown>)[releasedField] === true);
+        }
+      )
+      .subscribe();
+
+    void (async () => {
+      const { data } = await supabase
+        .from(WILDHACKS_CONFIG_TABLE)
+        .select(releasedField)
+        .eq("id", "config")
+        .maybeSingle();
+      await handleReleased((data as Record<string, unknown> | null)?.[releasedField] === true);
+    })();
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
   }, [hasSubmitted, releasedField]);
 
   if (hasSubmitted && released && suggestions.length > 0) {

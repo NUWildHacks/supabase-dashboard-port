@@ -1,8 +1,7 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import { ADMIN, DASHBOARD_PATH, LOGIN_PATH, TEAM_MATCHING_SETTINGS_DOC, WILDHACKS_COLLECTION } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { ADMIN, DASHBOARD_PATH, LOGIN_PATH, TEAM_MATCHING_SETTINGS_TABLE } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult, TeamMatchingSettings } from "@/types";
 
@@ -28,11 +27,23 @@ export const saveSettings = async (data: SaveSettingsData): Promise<ActionResult
       return { success: false, error: `Weights must sum to 1.0 (currently ${totalWeight.toFixed(3)}).` };
     }
 
-    const db = getFirestore();
-    await db
-      .collection(WILDHACKS_COLLECTION)
-      .doc(TEAM_MATCHING_SETTINGS_DOC)
-      .set({ ...data, updated_at: Date.now() });
+    // Write only real columns: the client may send extra keys (e.g. the previous updated_at)
+    const { error } = await supabaseAdmin.from(TEAM_MATCHING_SETTINGS_TABLE).upsert({
+      id: "team_matching_settings",
+      default_team_size: data.default_team_size,
+      enforce_mutual_requirement: data.enforce_mutual_requirement,
+      enforce_tech_member: data.enforce_tech_member,
+      where_to_meet: data.where_to_meet,
+      weight_role_diversity: data.weight_role_diversity,
+      weight_work_style: data.weight_work_style,
+      weight_skills_complementarity: data.weight_skills_complementarity,
+      weight_experience_mix: data.weight_experience_mix,
+      weight_gender_preference: data.weight_gender_preference,
+      weight_proximity: data.weight_proximity,
+      weight_size_preference: data.weight_size_preference,
+      updated_at: Date.now(),
+    });
+    if (error) throw error;
 
     return { success: true };
   } catch (error) {

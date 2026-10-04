@@ -1,18 +1,18 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
-  CROWD_FAVORITES_COLLECTION,
+  CROWD_FAVORITES_TABLE,
   DASHBOARD_CROWD_FAVORITE_PATH,
   DASHBOARD_PATH,
   LOGIN_PATH,
   PARTICIPANT,
-  USERS_COLLECTION,
+  USERS_TABLE,
 } from "@/constants";
-import { getAuthenticatedUser, requireRole, getConfigDocSnapshot } from "@/lib";
-import type { ActionResult, CrowdFavoriteProject, ParticipantUser, WildHacksConfig } from "@/types";
+import { getAuthenticatedUser, requireRole, getConfig } from "@/lib";
+import type { ActionResult, CrowdFavoriteProject } from "@/types";
 
 import { getCrowdFavoriteProjectForUser } from "../_lib";
 import { crowdFavoriteOptInFormSchema, type CrowdFavoriteOptInFormSchema } from "../_schemas";
@@ -21,7 +21,6 @@ import { isCrowdFavoriteOptInOpen } from "../constants";
 type CrowdFavoriteOptInResult = ActionResult<CrowdFavoriteOptInFormSchema>;
 
 type CandidateMember = {
-  refPath: string;
   id: string;
   first_name: string;
   email: string;
@@ -36,8 +35,7 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
     if (roleCheck) return roleCheck;
 
     // Fetch config once to pass to all helpers
-    const configDocSnapshot = await getConfigDocSnapshot();
-    const config = configDocSnapshot.data() as WildHacksConfig;
+    const config = await getConfig();
 
     if (!(await isCrowdFavoriteOptInOpen(config))) {
       return { success: false, error: "Crowd favorite opt-in is currently closed" };
@@ -56,7 +54,6 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
     }
 
     const data = parsed.data;
-    const db = getFirestore();
     const now = Date.now();
 
     const normalizedEmails = data.team_members.map((member) => member.email.trim().toLowerCase());
@@ -69,21 +66,21 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       };
     }
 
-    const candidateSnapshots = await Promise.all(
-      normalizedEmails.map((email) => db.collection(USERS_COLLECTION).where("email", "==", email).limit(1).get())
+    const candidateResults = await Promise.all(
+      normalizedEmails.map((email) =>
+        supabaseAdmin.from(USERS_TABLE).select("id, role, first_name").eq("email", email).limit(1).maybeSingle()
+      )
     );
 
     const candidateMembers: CandidateMember[] = [];
-    for (let index = 0; index < candidateSnapshots.length; index += 1) {
-      const snapshot = candidateSnapshots[index];
+    for (let index = 0; index < candidateResults.length; index += 1) {
+      const { data: user, error: userError } = candidateResults[index];
+      if (userError) throw userError;
       const email = normalizedEmails[index];
 
-      if (snapshot.empty) {
+      if (!user) {
         return { success: false, error: `No participant found for ${email}`, field: "team_members" };
       }
-
-      const doc = snapshot.docs[0];
-      const user = doc.data() as Omit<ParticipantUser, "id">;
 
       if (user.role !== PARTICIPANT) {
         return {
@@ -93,7 +90,7 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
         };
       }
 
-      if (await getCrowdFavoriteProjectForUser(doc.id)) {
+      if (await getCrowdFavoriteProjectForUser(user.id)) {
         return {
           success: false,
           error: `${email} is already assigned to a crowd favorite project`,
@@ -110,8 +107,7 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       }
 
       candidateMembers.push({
-        refPath: doc.ref.path,
-        id: doc.id,
+        id: user.id,
         first_name: user.first_name,
         email,
       });
@@ -121,58 +117,64 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       return { success: false, error: "You are already assigned to a crowd favorite project" };
     }
 
-    const callerRef = db.collection(USERS_COLLECTION).doc(caller.id);
-    const crowdFavoriteRef = db.collection(CROWD_FAVORITES_COLLECTION).doc();
+    // Re-check the caller and teammates right before the write.
+    const { data: callerRow, error: callerError } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("role")
+      .eq("id", caller.id)
+      .maybeSingle();
+    if (callerError) throw callerError;
+    if (!callerRow) {
+      throw new Error("Authenticated user no longer exists");
+    }
 
-    await db.runTransaction(async (transaction) => {
-      const callerSnapshot = await transaction.get(callerRef);
-      if (!callerSnapshot.exists) {
-        throw new Error("Authenticated user no longer exists");
+    if (callerRow.role !== PARTICIPANT) {
+      throw new Error("Only participants can opt in to crowd favorite");
+    }
+
+    const { data: teammateRows, error: teammatesError } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("id, role")
+      .in(
+        "id",
+        candidateMembers.map((member) => member.id)
+      );
+    if (teammatesError) throw teammatesError;
+
+    candidateMembers.forEach((member) => {
+      const teammate = teammateRows.find((row) => row.id === member.id);
+
+      if (!teammate) {
+        throw new Error(`Participant ${member.email} no longer exists`);
       }
 
-      const callerData = callerSnapshot.data() as Omit<ParticipantUser, "id">;
-      if (callerData.role !== PARTICIPANT) {
-        throw new Error("Only participants can opt in to crowd favorite");
+      if (teammate.role !== PARTICIPANT) {
+        throw new Error(`${member.email} is not a participant`);
       }
-
-      const teammateRefs = candidateMembers.map((member) => db.doc(member.refPath));
-      const teammateSnapshots = await Promise.all(teammateRefs.map((ref) => transaction.get(ref)));
-
-      teammateSnapshots.forEach((snapshot, index) => {
-        const teammateEmail = candidateMembers[index].email;
-
-        if (!snapshot.exists) {
-          throw new Error(`Participant ${teammateEmail} no longer exists`);
-        }
-
-        const teammateData = snapshot.data() as Omit<ParticipantUser, "id">;
-        if (teammateData.role !== PARTICIPANT) {
-          throw new Error(`${teammateEmail} is not a participant`);
-        }
-      });
-
-      const teamMembers: CrowdFavoriteProject["team_members"] = [
-        {
-          id: caller.id,
-          first_name: caller.first_name,
-          email: caller.email.toLowerCase(),
-        },
-        ...candidateMembers.map((member) => ({
-          id: member.id,
-          first_name: member.first_name,
-          email: member.email,
-        })),
-      ];
-
-      transaction.set(crowdFavoriteRef, {
-        project_name: data.project_name,
-        devpost_url: data.devpost_url,
-        team_members: teamMembers,
-        team_member_ids: teamMembers.map((m) => m.id),
-        created_at: now,
-        updated_at: now,
-      } as Omit<CrowdFavoriteProject, "id">);
     });
+
+    const teamMembers: CrowdFavoriteProject["team_members"] = [
+      {
+        id: caller.id,
+        first_name: caller.first_name,
+        email: caller.email.toLowerCase(),
+      },
+      ...candidateMembers.map((member) => ({
+        id: member.id,
+        first_name: member.first_name,
+        email: member.email,
+      })),
+    ];
+
+    const { error: insertError } = await supabaseAdmin.from(CROWD_FAVORITES_TABLE).insert({
+      project_name: data.project_name,
+      devpost_url: data.devpost_url,
+      team_members: teamMembers,
+      team_member_ids: teamMembers.map((m) => m.id),
+      created_at: now,
+      updated_at: now,
+    } as Omit<CrowdFavoriteProject, "id">);
+    if (insertError) throw insertError;
 
     revalidatePath(DASHBOARD_CROWD_FAVORITE_PATH);
     revalidatePath(DASHBOARD_PATH);

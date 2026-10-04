@@ -1,10 +1,9 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-import { getStorage } from "firebase-admin/storage";
 import { revalidatePath } from "next/cache";
 
-import { DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT, RESUMES_COLLECTION } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT, RESUMES_BUCKET, RESUMES_TABLE } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import { ActionResult } from "@/types";
 
@@ -12,9 +11,6 @@ import { MAX_FILE_SIZE, RESUME_MIME_TYPE } from "../constants";
 import { ResumeMetadata } from "../types";
 
 export const uploadResume = async (resume: File): Promise<ActionResult> => {
-  const db = getFirestore();
-  const storage = getStorage();
-
   const now = Date.now();
 
   if (resume.type !== RESUME_MIME_TYPE) return { success: false, error: "Only PDFs are allowed" };
@@ -28,44 +24,52 @@ export const uploadResume = async (resume: File): Promise<ActionResult> => {
     const roleError = requireRole(user, PARTICIPANT, "You are not authorized to upload a resume");
     if (roleError) return roleError;
 
-    const bucket = storage.bucket();
+    const bucket = supabaseAdmin.storage.from(RESUMES_BUCKET);
     const newFileName = `${first_name} ${last_name} - Resume.pdf`;
-    const newStoragePath = `gs://${bucket.name}/${newFileName}`;
+    const newStoragePath = `${id}/${newFileName}`;
 
-    const resumeRef = db.collection(RESUMES_COLLECTION).doc(id);
-    const resumeDocSnapshot = await resumeRef.get();
+    const { data: resumeRow, error: resumeError } = await supabaseAdmin
+      .from(RESUMES_TABLE)
+      .select()
+      .eq("id", id)
+      .maybeSingle();
+    if (resumeError) throw resumeError;
 
-    if (resumeDocSnapshot.exists) {
-      const { storage_path: oldStoragePath, file_name: oldFileName } = resumeDocSnapshot.data() as Omit<
-        ResumeMetadata,
-        "id"
-      >;
+    if (resumeRow) {
+      const { storage_path: oldStoragePath } = resumeRow as Omit<ResumeMetadata, "id">;
 
       if (oldStoragePath !== newStoragePath) {
-        await bucket.file(oldFileName).delete();
+        const { error: removeError } = await bucket.remove([oldStoragePath]);
+        if (removeError) throw removeError;
       }
     }
 
     const buffer = Buffer.from(await resume.arrayBuffer());
-    await bucket.file(newFileName).save(buffer, {
-      metadata: {
-        uploadedBy: id,
-      },
+    const { error: uploadError } = await bucket.upload(newStoragePath, buffer, {
+      contentType: RESUME_MIME_TYPE,
+      upsert: true,
     });
+    if (uploadError) throw uploadError;
 
-    if (resumeDocSnapshot.exists) {
-      await resumeRef.update({
-        file_name: newFileName,
-        storage_path: newStoragePath,
-        updated_at: now,
-      } as Omit<ResumeMetadata, "id" | "created_at">);
+    if (resumeRow) {
+      const { error: updateError } = await supabaseAdmin
+        .from(RESUMES_TABLE)
+        .update({
+          file_name: newFileName,
+          storage_path: newStoragePath,
+          updated_at: now,
+        } as Omit<ResumeMetadata, "id" | "created_at">)
+        .eq("id", id);
+      if (updateError) throw updateError;
     } else {
-      await resumeRef.set({
+      const { error: insertError } = await supabaseAdmin.from(RESUMES_TABLE).upsert({
+        id,
         file_name: newFileName,
         storage_path: newStoragePath,
         created_at: now,
         updated_at: now,
-      } as Omit<ResumeMetadata, "id">);
+      } as ResumeMetadata);
+      if (insertError) throw insertError;
     }
 
     revalidatePath(DASHBOARD_PATH);

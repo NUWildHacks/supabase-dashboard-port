@@ -1,16 +1,15 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
   ADMIN,
   DASHBOARD_PATH,
   DASHBOARD_SETTINGS_PATH,
   LOGIN_PATH,
-  WILDHACKS_COLLECTION,
-  WILDHACKS_CONFIG_DOC,
-  WILDHACKS_SECRETS_DOC,
+  WILDHACKS_CONFIG_TABLE,
+  WILDHACKS_SECRETS_TABLE,
 } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult } from "@/types";
@@ -20,7 +19,6 @@ import { EditWildhacksConfigFormSchema } from "../_schemas/edit-wildhacks-config
 export type EditWildhacksConfigResult = ActionResult<EditWildhacksConfigFormSchema>;
 
 export const editWildhacksConfig = async (data: EditWildhacksConfigFormSchema): Promise<EditWildhacksConfigResult> => {
-  const db = getFirestore();
   const now = Date.now();
 
   try {
@@ -32,18 +30,20 @@ export const editWildhacksConfig = async (data: EditWildhacksConfigFormSchema): 
 
     const { max_team_size, max_participants, crowd_favorite_password, ...rest } = data;
 
-    await Promise.all([
-      db
-        .collection(WILDHACKS_COLLECTION)
-        .doc(WILDHACKS_CONFIG_DOC)
+    const [{ error: configError }, { error: secretsError }] = await Promise.all([
+      supabaseAdmin
+        .from(WILDHACKS_CONFIG_TABLE)
         .update({
           ...rest,
           max_team_size: Number(max_team_size),
           max_participants: Number(max_participants),
           updated_at: now,
-        }),
-      db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_SECRETS_DOC).set({ crowd_favorite_password }, { merge: true }),
+        })
+        .eq("id", "config"),
+      supabaseAdmin.from(WILDHACKS_SECRETS_TABLE).upsert({ id: "secrets", crowd_favorite_password }),
     ]);
+    if (configError) throw configError;
+    if (secretsError) throw secretsError;
 
     revalidatePath(DASHBOARD_SETTINGS_PATH);
     revalidatePath(DASHBOARD_PATH);

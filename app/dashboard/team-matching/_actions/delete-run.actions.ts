@@ -1,17 +1,12 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
+import supabaseAdmin from "@/config/supabase-admin";
 import {
   ADMIN,
   DASHBOARD_PATH,
   LOGIN_PATH,
-  TEAM_MATCHING_FORMATIONS_COLLECTION,
-  TEAM_MATCHING_FORMATIONS_COLLECTION_PROD,
-  TEAM_MATCHING_RUNS_COLLECTION,
-  TEAM_MATCHING_RUNS_COLLECTION_PROD,
-  TEAM_MATCHING_TEAMS_COLLECTION,
-  TEAM_MATCHING_TEAMS_COLLECTION_PROD,
+  TEAM_MATCHING_RUNS_TABLE,
+  TEAM_MATCHING_RUNS_TABLE_PROD,
 } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult, TeamMatchingMode } from "@/types";
@@ -23,32 +18,23 @@ export const deleteRun = async (runId: string, mode: TeamMatchingMode = "dev"): 
     const roleCheck = requireRole(user, ADMIN);
     if (roleCheck) return roleCheck;
 
-    const db = getFirestore();
-    const runsCollection = mode === "prod" ? TEAM_MATCHING_RUNS_COLLECTION_PROD : TEAM_MATCHING_RUNS_COLLECTION;
-    const teamsCollection = mode === "prod" ? TEAM_MATCHING_TEAMS_COLLECTION_PROD : TEAM_MATCHING_TEAMS_COLLECTION;
-    const formationsCollection =
-      mode === "prod" ? TEAM_MATCHING_FORMATIONS_COLLECTION_PROD : TEAM_MATCHING_FORMATIONS_COLLECTION;
+    const runsTable = mode === "prod" ? TEAM_MATCHING_RUNS_TABLE_PROD : TEAM_MATCHING_RUNS_TABLE;
 
-    const runRef = db.collection(runsCollection).doc(runId);
-    const runSnap = await runRef.get();
+    const { data: run, error: runError } = await supabaseAdmin
+      .from(runsTable)
+      .select("is_top")
+      .eq("id", runId)
+      .maybeSingle();
+    if (runError) throw runError;
 
-    if (!runSnap.exists) return { success: false, error: "Run not found." };
-    if (runSnap.data()?.is_top === true) {
+    if (!run) return { success: false, error: "Run not found." };
+    if (run.is_top === true) {
       return { success: false, error: "Cannot delete a run marked as top choice. Unmark it first." };
     }
 
-    const teamsSnap = await db.collection(teamsCollection).where("run_id", "==", runId).get();
-
-    const formationRefs = [1, 2].map((i) => db.collection(formationsCollection).doc(`${runId}_alt${i}`));
-
-    const allRefs = [runRef, ...teamsSnap.docs.map((d) => d.ref), ...formationRefs];
-
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < allRefs.length; i += CHUNK_SIZE) {
-      const batch = db.batch();
-      for (const ref of allRefs.slice(i, i + CHUNK_SIZE)) batch.delete(ref);
-      await batch.commit();
-    }
+    // Deleting the run row cascades to its teams and formations
+    const { error: deleteError } = await supabaseAdmin.from(runsTable).delete().eq("id", runId);
+    if (deleteError) throw deleteError;
 
     return { success: true };
   } catch (error) {

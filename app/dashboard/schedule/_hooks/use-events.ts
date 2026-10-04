@@ -1,11 +1,11 @@
 "use client";
 
-import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { useEffect, useMemo, useState } from "react";
 
-import { db } from "@/config/firebase-client";
-import { EVENTS_COLLECTION } from "@/constants";
+import { createSupabaseBrowserClient } from "@/config/supabase-browser";
+import { EVENTS_TABLE } from "@/constants";
 import type { UseFiltersReturnWithAll } from "@/hooks";
+import { fromRows } from "@/lib/db.lib";
 
 import { EVENT_FIELDS } from "../constants";
 import type { CalendarDay, Event, EventCategory } from "../types";
@@ -29,33 +29,42 @@ export const useEvents = (settings: UseEventsSettings): UseEventsReturn => {
   const { category, search, selectedDay, limitCount } = settings;
 
   useEffect(() => {
-    let q = query(collection(db, EVENTS_COLLECTION), orderBy(EVENT_FIELDS.start_time, "asc"));
+    const supabase = createSupabaseBrowserClient();
+    let isActive = true;
 
-    if (limitCount) {
-      q = query(q, limit(limitCount));
-    }
+    const fetchEvents = async () => {
+      let q = supabase.from(EVENTS_TABLE).select().order(EVENT_FIELDS.start_time, { ascending: true });
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const docs = snapshot.docs.map(
-          (doc) =>
-            ({
-              id: doc.id,
-              ...doc.data(),
-            }) as Event
-        );
+      if (limitCount) {
+        q = q.limit(limitCount);
+      }
 
-        setAllEvents(docs);
-        setIsLoading(false);
-      },
-      (error) => {
+      const { data, error } = await q;
+      if (!isActive) return;
+
+      if (error) {
         console.error("Error fetching events:", error);
         setIsLoading(false);
+        return;
       }
-    );
 
-    return () => unsubscribe();
+      setAllEvents(fromRows<Event>(data));
+      setIsLoading(false);
+    };
+
+    fetchEvents();
+
+    const channel = supabase
+      .channel(`events-${crypto.randomUUID()}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: EVENTS_TABLE }, () => {
+        fetchEvents();
+      })
+      .subscribe();
+
+    return () => {
+      isActive = false;
+      supabase.removeChannel(channel);
+    };
   }, [limitCount]);
 
   const events = useMemo(() => {

@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { LOGIN_PATH } from "@/constants";
-import { getConfigDocSnapshot, verifySession } from "@/lib";
-import type { WildHacksConfig } from "@/types";
+import { getConfig, verifySession } from "@/lib";
 
 import RegistrationForm from "./_components/registration-form";
 import { registerJudgeMentorWithEmail } from "./lib";
@@ -15,8 +14,7 @@ const RegistrationPage = async () => {
 
   await registerJudgeMentorWithEmail(id, email);
 
-  const configDocSnapshot = await getConfigDocSnapshot();
-  const wildhacksConfig = configDocSnapshot.data() as WildHacksConfig;
+  const wildhacksConfig = await getConfig();
 
   return (
     <main className="flex-1 px-6 sm:px-12 py-12 flex flex-col justify-center items-center">

@@ -1,9 +1,9 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { redirect } from "next/navigation";
 
-import { USERS_COLLECTION, PARTICIPANT, LOGIN_PATH, REGISTRATION_PATH, PARTICIPANT_USER_FIELDS } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { USERS_TABLE, PARTICIPANT, LOGIN_PATH, REGISTRATION_PATH, PARTICIPANT_USER_FIELDS } from "@/constants";
 import { verifySession } from "@/lib";
 import type { ActionResult, WildHacksConfig } from "@/types";
 
@@ -23,7 +23,6 @@ export const registerUser = async (
 
   const { id: userId } = userInfo;
 
-  const db = getFirestore();
   const now = Date.now();
 
   try {
@@ -33,28 +32,36 @@ export const registerUser = async (
 
     const { ...rest } = data;
 
-    const participantsDocRefs = db.collection(USERS_COLLECTION).where(PARTICIPANT_USER_FIELDS.role, "==", PARTICIPANT);
-    const participantsDocSnapshots = await participantsDocRefs.get();
-    if (participantsDocSnapshots.docs.length >= max_participants) {
+    const { count: participantCount, error: countError } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("id", { count: "exact", head: true })
+      .eq(PARTICIPANT_USER_FIELDS.role, PARTICIPANT);
+    if (countError) throw countError;
+    if ((participantCount ?? 0) >= max_participants) {
       throw new Error("The event is full");
     }
 
-    const emailDocSnapshot = await db
-      .collection(USERS_COLLECTION)
-      .where(PARTICIPANT_USER_FIELDS.email, "==", userInfo.email)
-      .limit(1)
-      .get();
+    const { data: emailRows, error: emailError } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("id")
+      .eq(PARTICIPANT_USER_FIELDS.email, userInfo.email)
+      .limit(1);
+    if (emailError) throw emailError;
 
-    const userDocRef = db.collection(USERS_COLLECTION).doc(userId);
-    await userDocRef.set({
+    const { error: upsertError } = await supabaseAdmin.from(USERS_TABLE).upsert({
       ...rest,
+      id: userId,
       role: PARTICIPANT,
       created_at: now,
       updated_at: now,
     });
+    if (upsertError) throw upsertError;
 
-    if (!emailDocSnapshot.empty) {
-      await emailDocSnapshot.docs[0].ref.delete();
+    // Delete the pre-created email row, but never the row that was just written.
+    const emailRowId = emailRows?.[0]?.id;
+    if (emailRowId && emailRowId !== userId) {
+      const { error: deleteError } = await supabaseAdmin.from(USERS_TABLE).delete().eq("id", emailRowId);
+      if (deleteError) throw deleteError;
     }
 
     return { success: true };

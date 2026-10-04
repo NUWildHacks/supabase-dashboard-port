@@ -48,58 +48,44 @@ Thank you for your interest in contributing to the WildHacks Dashboard! This gui
    Copy `.env.example` to create a `.env.local` file in the root directory with the following variables:
 
    ```env
-   # Firebase Configuration (Client-side)
-   NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
-   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_auth_domain
-   NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
-   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_storage_bucket
-   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-   NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
-
-   # Firebase Admin SDK (Server-side)
-   FIREBASE_ADMIN_PROJECT_ID=your_project_id
-   FIREBASE_ADMIN_CLIENT_EMAIL=your_client_email
-   FIREBASE_ADMIN_PRIVATE_KEY=your_private_key
+   # Supabase (`pnpm exec supabase status` prints the local values)
+   NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
+   SUPABASE_SECRET_KEY=your_secret_key
 
    # Application Environment
    APP_ENV=development
    ```
 
-   **Note**: Contact the project maintainers for access to Firebase credentials. Never commit `.env.local` to version control.
+   **Note**: Contact the project maintainers for access to the hosted Supabase project. Never commit `.env.local` to version control. `SUPABASE_SECRET_KEY` bypasses row level security: use it only in server code.
 
-### Firebase Setup
+### Supabase Setup
 
-1. Install Firebase CLI (if not already installed):
-
-   ```bash
-   npm install -g firebase-tools
-   ```
-
-2. Login to Firebase:
+1. Start the local Supabase stack (requires Docker). This applies every file in `supabase/migrations/` and then `supabase/seed.sql`:
 
    ```bash
-   firebase login
+   pnpm exec supabase start
    ```
 
-3. Select the correct Firebase project:
+2. Reset the local database after you change a migration:
 
    ```bash
-   # For development
-   firebase use development
-
-   # Or for production (use with caution)
-   firebase use production
+   pnpm exec supabase db reset
    ```
 
-4. Pull remote Firestore indexes to keep `firestore.indexes.json` in sync:
+3. Make schema changes as new migration files, never by editing an applied migration:
 
    ```bash
-   firebase firestore:indexes --project=development > firestore.indexes.json
+   pnpm exec supabase migration new <short_name>
    ```
 
-   **Important**: Run this command whenever indexes are updated remotely (via Firebase Console or CI/CD) to keep your local `firestore.indexes.json` file synchronized. Failing to do so will cause the `firebase deploy` command to fail.
+   CI applies new migrations with `supabase db push` (development on feature branches, production on `main`).
 
-   **Note**: Replace `development` with your actual Firebase project alias if different.
+4. Stop the stack when you are done:
+
+   ```bash
+   pnpm exec supabase stop
+   ```
 
 ### Development Server
 
@@ -132,7 +118,7 @@ dashboard-2026/
 ├── components/             # Shared React components
 │   ├── form/              # Form-specific components
 │   ├── ui/                # ShadCN UI components (do not edit directly)
-├── config/                # Configuration files (Firebase, etc.)
+├── config/                # Supabase clients (browser, server, admin)
 ├── constants/            # Application-wide constants
 │   └── index.ts          # Barrel export for all constants
 ├── hooks/                # Shared React hooks
@@ -519,20 +505,20 @@ export type { UseMyHookReturn } from "./use-my-hook";
 
 ### Overview
 
-Server actions are Next.js functions that run on the server and handle database operations securely using the Firebase Admin SDK. They provide a secure way to perform write operations that bypass Firestore security rules.
+Server actions are Next.js functions that run on the server and handle database operations securely using the Supabase admin client (`@/config/supabase-admin`). They provide a secure way to perform write operations that bypass row level security (RLS).
 
 ### When to Use Server Actions
 
 ✅ **Use server actions for:**
 
 - All database write operations (create, update, delete)
-- Operations that require Admin SDK privileges
+- Operations that require admin (secret key) privileges
 - Form submissions that have server-side logic
-- Operations that should bypass Firestore security rules
+- Operations that should bypass row level security
 
 ❌ **Do NOT use server actions for:**
 
-- Read-only operations that need real-time updates (use `onSnapshot` with client SDK)
+- Read-only operations that need real-time updates (use a Supabase Realtime channel with the browser client)
 - Operations that don't require database access
 - Client-side only operations
 
@@ -541,7 +527,7 @@ Server actions are Next.js functions that run on the server and handle database 
 The project uses a **hybrid approach** for forms:
 
 1. **React Hook Form** handles client-side validation and form state
-2. **Server Actions** handle database operations using Admin SDK
+2. **Server Actions** handle database operations using the Supabase admin client
 3. **Toast notifications** display server-side errors
 
 This provides:
@@ -572,10 +558,10 @@ app/dashboard/my-feature/
 ```typescript
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
-import { LOGIN_PATH, DASHBOARD_PATH } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { LOGIN_PATH, DASHBOARD_PATH, MY_TABLE } from "@/constants";
 import { getAuthenticatedUser } from "@/lib";
 import type { ActionResult } from "@/types";
 
@@ -584,7 +570,6 @@ import { type MyFormSchema } from "../_schemas/my-form.schemas";
 export type MyActionResult = ActionResult<MyFormSchema>;
 
 export const myAction = async (data: MyFormSchema): Promise<MyActionResult> => {
-  const db = getFirestore();
   const now = Date.now();
 
   try {
@@ -592,8 +577,12 @@ export const myAction = async (data: MyFormSchema): Promise<MyActionResult> => {
     const user = await getAuthenticatedUser(redirectPath);
     // User is guaranteed to be authenticated and exist in database at this point
 
-    // Perform database operations
-    // ...
+    // Perform database operations; always check the returned error
+    const { error } = await supabaseAdmin
+      .from(MY_TABLE)
+      .update({ ...data, updated_at: now })
+      .eq("id", user.id);
+    if (error) throw error;
 
     // Revalidate the path to refresh server components
     revalidatePath(DASHBOARD_PATH);
@@ -1341,7 +1330,7 @@ pnpm run build
    // _lib/lib.ts (server-side)
    "use server";
 
-   import { getFirestore } from "firebase-admin/firestore";
+   import supabaseAdmin from "@/config/supabase-admin";
 
    export const getMyData = async () => {
      // server-side data fetching
@@ -1420,11 +1409,11 @@ When adding new exports:
 - Ensure all types are properly imported
 - Check that barrel exports are updated
 
-**Firebase connection issues:**
+**Supabase connection issues:**
 
 - Verify `.env.local` file exists and has correct credentials
-- Check that Firebase project is active
-- Ensure Firebase Admin SDK credentials are properly formatted (newlines in private key)
+- Check that the local stack is running (`pnpm exec supabase status`) or the hosted project is not paused
+- Ensure `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` belong to the same project
 
 **Import errors:**
 
@@ -1442,7 +1431,7 @@ When adding new exports:
 
 - Ensure `"use server"` directive is at the top of the file
 - Verify authentication using `getAuthenticatedUser`
-- Check that Firebase Admin SDK is initialized
+- Check the `error` returned by each Supabase query (`if (error) throw error;`)
 
 ## Additional Resources
 
@@ -1453,7 +1442,7 @@ When adding new exports:
 - [TypeScript Handbook](https://www.typescriptlang.org/docs/) - TypeScript best practices
 - [Tailwind CSS Documentation](https://tailwindcss.com/docs) - Utility classes and configuration
 - [ShadCN UI Documentation](https://ui.shadcn.com) - Component library and customization
-- [Firebase Documentation](https://firebase.google.com/docs) - Authentication, Firestore, Admin SDK
+- [Supabase Documentation](https://supabase.com/docs) - Auth, Postgres, Storage, Realtime
 - [Zod Documentation](https://zod.dev) - Schema validation and type inference
 - [React Hook Form Documentation](https://react-hook-form.com) - Form state management
 

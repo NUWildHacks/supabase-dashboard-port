@@ -6,30 +6,27 @@ on:
       - main
       - master
     paths:
-      - "firestore.rules"
-      - "firestore.indexes.json"
-      - "firebase.json"
+      - "supabase/migrations/**"
 
 jobs:
-  deploy-firestore:
+  deploy-database:
     runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
         with:
-          node-version: "20"
+          version: latest
 
-      - name: Install Firebase CLI
-        run: npm install -g firebase-tools
+      - name: Link Supabase project
+        run: supabase link --project-ref ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
 
-      - name: Authenticate with Firebase
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.PROD_FIREBASE_SERVICE_ACCOUNT_KEY }}
-
-      - name: Deploy Firestore rules and indexes
-        run: firebase deploy --only firestore --project production --non-interactive
+      - name: Apply database migrations
+        run: supabase db push

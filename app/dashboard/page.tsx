@@ -1,5 +1,3 @@
-import { getFirestore } from "firebase-admin/firestore";
-
 import {
   CrowdFavoriteAdminLink,
   CrowdFavoriteParticipantLink,
@@ -22,22 +20,23 @@ import {
   isCrowdFavoritePresentationPhase,
   isCrowdFavoriteVotingOpen,
 } from "@/app/dashboard/crowd-favorite/constants";
+import supabaseAdmin from "@/config/supabase-admin";
 import {
   ADMIN,
   DASHBOARD_PATH,
   LOGIN_PATH,
   PARTICIPANT,
-  TEAM_MATCHING_FORMATIONS_COLLECTION,
-  TEAM_MATCHING_FORMATIONS_COLLECTION_PROD,
-  TEAM_MATCHING_INTAKE_COLLECTION,
-  TEAM_MATCHING_INTAKE_COLLECTION_DEV,
-  TEAM_MATCHING_RUNS_COLLECTION,
-  TEAM_MATCHING_RUNS_COLLECTION_PROD,
-  TEAM_MATCHING_TEAMS_COLLECTION,
-  TEAM_MATCHING_TEAMS_COLLECTION_PROD,
+  TEAM_MATCHING_FORMATIONS_TABLE,
+  TEAM_MATCHING_FORMATIONS_TABLE_PROD,
+  TEAM_MATCHING_INTAKE_TABLE,
+  TEAM_MATCHING_INTAKE_TABLE_DEV,
+  TEAM_MATCHING_RUNS_TABLE,
+  TEAM_MATCHING_RUNS_TABLE_PROD,
+  TEAM_MATCHING_TEAMS_TABLE,
+  TEAM_MATCHING_TEAMS_TABLE_PROD,
 } from "@/constants";
-import { calculateStatistics, cn, getAuthenticatedUser, getConfigDocSnapshot } from "@/lib";
-import type { MatchedTeam, TeamFormation, TeamMatchingRun, TeamSuggestion, WildHacksConfig } from "@/types";
+import { calculateStatistics, cn, fromRows, getAuthenticatedUser, getConfig } from "@/lib";
+import type { MatchedTeam, TeamFormation, TeamMatchingRun, TeamSuggestion } from "@/types";
 
 import { TeamMatchingGate } from "./_components/team-matching-gate";
 import { getResumeMetadata } from "./_lib/resume";
@@ -50,9 +49,13 @@ async function fetchTopSuggestions(
     formations: string;
   }
 ): Promise<TeamSuggestion[]> {
-  const db = getFirestore();
-  const topRunsSnap = await db.collection(collections.runs).where("is_top", "==", true).orderBy("run_at", "desc").get();
-  const topRuns = topRunsSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as TeamMatchingRun);
+  const { data: topRunRows, error: topRunsError } = await supabaseAdmin
+    .from(collections.runs)
+    .select()
+    .eq("is_top", true)
+    .order("run_at", { ascending: false });
+  if (topRunsError) throw topRunsError;
+  const topRuns = fromRows<TeamMatchingRun>(topRunRows);
 
   const results: TeamSuggestion[] = [];
   const seen = new Set<string>();
@@ -78,20 +81,27 @@ async function fetchTopSuggestions(
   for (const run of topRuns) {
     if (results.length >= 3) break;
 
-    const teamsSnap = await db.collection(collections.teams).where("run_id", "==", run.id).get();
-    const primary = teamsSnap.docs
-      .map((d) => ({ id: d.id, ...d.data() }) as MatchedTeam)
-      .find((t) => t.members.some((m) => m.user_id === userId));
+    const { data: teamRows, error: teamsError } = await supabaseAdmin
+      .from(collections.teams)
+      .select()
+      .eq("run_id", run.id);
+    if (teamsError) throw teamsError;
+    const primary = fromRows<MatchedTeam>(teamRows).find((t) => t.members.some((m) => m.user_id === userId));
     if (primary) tryAdd(primary);
 
     if (results.length >= 3) break;
 
-    const altDocs = await Promise.all(
-      [1, 2].map((i) => db.collection(collections.formations).doc(`${run.id}_alt${i}`).get())
-    );
-    for (const altDoc of altDocs) {
-      if (!altDoc.exists || results.length >= 3) continue;
-      const formation = altDoc.data() as TeamFormation;
+    const { data: formationRows, error: formationsError } = await supabaseAdmin
+      .from(collections.formations)
+      .select("run_id, formation_index, teams, fingerprint")
+      .in(
+        "id",
+        [1, 2].map((i) => `${run.id}_alt${i}`)
+      );
+    if (formationsError) throw formationsError;
+    const formations = fromRows<TeamFormation>(formationRows).sort((a, b) => a.formation_index - b.formation_index);
+    for (const formation of formations) {
+      if (results.length >= 3) continue;
       const altTeam = formation.teams.find((t) => t.members.some((m) => m.user_id === userId));
       if (altTeam) tryAdd(altTeam);
     }
@@ -107,8 +117,7 @@ const DashboardPage = async () => {
   const school = "school" in userProfile ? userProfile.school : "";
   const field_of_study = "field_of_study" in userProfile ? userProfile.field_of_study : "";
 
-  const configDocSnapshot = await getConfigDocSnapshot();
-  const wildhacksConfig = configDocSnapshot.data() as WildHacksConfig;
+  const wildhacksConfig = await getConfig();
   const wildHacksStatistics = role === ADMIN ? await calculateStatistics() : undefined;
 
   const resumeMetadata = await getResumeMetadata(userId);
@@ -127,36 +136,36 @@ const DashboardPage = async () => {
 
   const isOptedIn = crowdFavoriteProject !== null;
 
-  const db = getFirestore();
-
   let hasSubmittedTeamMatching = false;
-  if (role === PARTICIPANT) {
-    const doc = await db.collection(TEAM_MATCHING_INTAKE_COLLECTION).doc(userId).get();
-    hasSubmittedTeamMatching = doc.exists;
-  }
-  if (role === ADMIN) {
-    const doc = await db.collection(TEAM_MATCHING_INTAKE_COLLECTION_DEV).doc(userId).get();
-    hasSubmittedTeamMatching = doc.exists;
+  if (role === PARTICIPANT || role === ADMIN) {
+    const intakeTable = role === PARTICIPANT ? TEAM_MATCHING_INTAKE_TABLE : TEAM_MATCHING_INTAKE_TABLE_DEV;
+    const { data: intake, error: intakeError } = await supabaseAdmin
+      .from(intakeTable)
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (intakeError) throw intakeError;
+    hasSubmittedTeamMatching = intake !== null;
   }
 
   const adminMode = wildhacksConfig.team_matching_mode ?? "dev";
   const suggestionCollections =
     role === PARTICIPANT
       ? {
-          runs: TEAM_MATCHING_RUNS_COLLECTION_PROD,
-          teams: TEAM_MATCHING_TEAMS_COLLECTION_PROD,
-          formations: TEAM_MATCHING_FORMATIONS_COLLECTION_PROD,
+          runs: TEAM_MATCHING_RUNS_TABLE_PROD,
+          teams: TEAM_MATCHING_TEAMS_TABLE_PROD,
+          formations: TEAM_MATCHING_FORMATIONS_TABLE_PROD,
         }
       : adminMode === "prod"
         ? {
-            runs: TEAM_MATCHING_RUNS_COLLECTION_PROD,
-            teams: TEAM_MATCHING_TEAMS_COLLECTION_PROD,
-            formations: TEAM_MATCHING_FORMATIONS_COLLECTION_PROD,
+            runs: TEAM_MATCHING_RUNS_TABLE_PROD,
+            teams: TEAM_MATCHING_TEAMS_TABLE_PROD,
+            formations: TEAM_MATCHING_FORMATIONS_TABLE_PROD,
           }
         : {
-            runs: TEAM_MATCHING_RUNS_COLLECTION,
-            teams: TEAM_MATCHING_TEAMS_COLLECTION,
-            formations: TEAM_MATCHING_FORMATIONS_COLLECTION,
+            runs: TEAM_MATCHING_RUNS_TABLE,
+            teams: TEAM_MATCHING_TEAMS_TABLE,
+            formations: TEAM_MATCHING_FORMATIONS_TABLE,
           };
 
   const initialSuggestions =

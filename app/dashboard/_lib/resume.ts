@@ -1,35 +1,36 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import { RESUMES_COLLECTION } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { RESUMES_TABLE } from "@/constants";
+import { fromRow } from "@/lib";
 
 import { ResumeMetadata } from "../types";
 
 /**
- * Get the resume metadata from Firestore.
- * Throws an error if the document does not exist.
+ * Get the resume metadata from the database.
+ * Throws an error if the database query fails.
  *
- * @returns Promise resolving to the Firestore document snapshot containing resume metadata
- * @returns null if the resume document is not found
+ * @returns Promise resolving to the resume metadata row
+ * @returns null if the resume row is not found
  * @example
  * ```ts
  * const resumeMetadata = await getResumeMetadata("user123");
- * console.log(resumeMetadata.fileName, resumeMetadata.url);
+ * console.log(resumeMetadata.file_name, resumeMetadata.storage_path);
  * ```
  */
 const getResumeMetadata = async (userId: string): Promise<Omit<ResumeMetadata, "id"> | null> => {
-  const db = getFirestore();
+  const { data, error } = await supabaseAdmin
+    .from(RESUMES_TABLE)
+    .select("file_name, storage_path, created_at, updated_at")
+    .eq("id", userId)
+    .maybeSingle();
 
-  const resumeDocRef = db.collection(RESUMES_COLLECTION).doc(userId);
-
-  const resumeDocSnapshot = await resumeDocRef.get();
-
-  if (!resumeDocSnapshot.exists) {
+  if (error) throw error;
+  if (!data) {
     return null;
   }
 
-  return resumeDocSnapshot.data() as Omit<ResumeMetadata, "id">;
+  return fromRow<Omit<ResumeMetadata, "id">>(data);
 };
 
 export { getResumeMetadata };

@@ -1,21 +1,17 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import admin from "@/config/firebase-admin";
-import { USERS_COLLECTION, DASHBOARD_SETTINGS_PATH, LOGIN_PATH } from "@/constants";
-import { getAuthenticatedUser, getConfigDocSnapshot } from "@/lib";
-import type { ActionResult, WildHacksConfig } from "@/types";
+import supabaseAdmin from "@/config/supabase-admin";
+import { USERS_TABLE, DASHBOARD_SETTINGS_PATH, LOGIN_PATH } from "@/constants";
+import { getAuthenticatedUser, getConfig } from "@/lib";
+import type { ActionResult } from "@/types";
 
 export type WithdrawEventResult = ActionResult;
 
 export const withdrawEvent = async (): Promise<WithdrawEventResult> => {
-  const db = getFirestore();
   const now = Date.now();
 
   try {
-    const configDocSnapshot = await getConfigDocSnapshot();
-    const { end_time } = configDocSnapshot.data() as WildHacksConfig;
+    const { end_time } = await getConfig();
 
     if (now >= end_time) {
       return {
@@ -28,9 +24,11 @@ export const withdrawEvent = async (): Promise<WithdrawEventResult> => {
     const user = await getAuthenticatedUser(redirectPath);
     const { id: userId } = user;
 
-    await db.collection(USERS_COLLECTION).doc(userId).delete();
+    const { error: deleteUserRowError } = await supabaseAdmin.from(USERS_TABLE).delete().eq("id", userId);
+    if (deleteUserRowError) throw deleteUserRowError;
 
-    await admin.auth().deleteUser(userId);
+    const { error: deleteAuthUserError } = await supabaseAdmin.auth.admin.deleteUser(userId);
+    if (deleteAuthUserError) throw deleteAuthUserError;
 
     return { success: true };
   } catch (error) {

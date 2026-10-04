@@ -1,16 +1,12 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import {
-  TEAM_MATCHING_INTAKE_COLLECTION,
-  USERS_COLLECTION,
-  LOGIN_PATH,
-  DASHBOARD_PATH,
-  PARTICIPANT,
-} from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { TEAM_MATCHING_INTAKE_TABLE, USERS_TABLE, LOGIN_PATH, DASHBOARD_PATH, PARTICIPANT } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult } from "@/types";
+
+// Postgres error code for a unique constraint violation
+const UNIQUE_VIOLATION = "23505";
 
 const VALID_EXPERIENCE_LEVELS = ["beginner", "intermediate", "experienced"] as const;
 const VALID_WORK_STYLES = ["competitive", "casual", "in_between"] as const;
@@ -136,27 +132,38 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
     }
 
     const now = Date.now();
-    const db = getFirestore();
 
     if (data.required_teammates.length > 0) {
-      const teammateRefs = data.required_teammates.map((id) => db.collection(USERS_COLLECTION).doc(id));
-      const teammateDocs = await db.getAll(...teammateRefs);
-      if (teammateDocs.some((d) => !d.exists)) {
+      const { data: teammates, error: teammatesError } = await supabaseAdmin
+        .from(USERS_TABLE)
+        .select("id")
+        .in("id", data.required_teammates);
+      if (teammatesError) throw teammatesError;
+      if ((teammates ?? []).length !== data.required_teammates.length) {
         return { success: false, error: "One or more required teammates could not be found." };
       }
     }
-    const docRef = db.collection(TEAM_MATCHING_INTAKE_COLLECTION).doc(userId);
-    const existing = await docRef.get();
 
-    if (existing.exists) {
-      return { success: false, error: "You have already submitted the team matching survey." };
-    }
-
-    await docRef.set({
-      ...data,
+    // The user_id primary key rejects a second submission with a unique violation
+    const { error } = await supabaseAdmin.from(TEAM_MATCHING_INTAKE_TABLE).insert({
       user_id: userId,
+      experience_level: data.experience_level,
+      preferred_roles: data.preferred_roles,
+      skills: data.skills,
+      additional_notes: data.additional_notes,
+      preferred_team_size: data.preferred_team_size,
+      work_style: data.work_style,
+      required_teammates: data.required_teammates,
+      consent: data.consent,
+      gender_preference: data.gender_preference ?? null,
+      where_staying: data.where_staying ?? null,
       created_at: now,
     });
+
+    if (error?.code === UNIQUE_VIOLATION) {
+      return { success: false, error: "You have already submitted the team matching survey." };
+    }
+    if (error) throw error;
 
     return { success: true };
   } catch (error) {

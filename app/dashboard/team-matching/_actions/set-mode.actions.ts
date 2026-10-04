@@ -1,8 +1,7 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import { ADMIN, DASHBOARD_PATH, LOGIN_PATH, WILDHACKS_COLLECTION, WILDHACKS_CONFIG_DOC } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { ADMIN, DASHBOARD_PATH, LOGIN_PATH, WILDHACKS_CONFIG_TABLE } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib";
 import type { ActionResult, TeamMatchingMode } from "@/types";
 
@@ -13,10 +12,11 @@ export const setTeamMatchingMode = async (mode: TeamMatchingMode): Promise<Actio
     const roleCheck = requireRole(user, ADMIN);
     if (roleCheck) return roleCheck;
 
-    const db = getFirestore();
-    await db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_CONFIG_DOC).update({
-      team_matching_mode: mode,
-    });
+    const { error } = await supabaseAdmin
+      .from(WILDHACKS_CONFIG_TABLE)
+      .update({ team_matching_mode: mode })
+      .eq("id", "config");
+    if (error) throw error;
 
     return { success: true };
   } catch (error) {
