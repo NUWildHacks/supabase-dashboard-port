@@ -3,13 +3,24 @@
 import { revalidatePath } from "next/cache";
 
 import supabaseAdmin from "@/config/supabase-admin";
-import { DASHBOARD_CROWD_FAVORITE_PATH, DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT, USERS_TABLE } from "@/constants";
+import {
+  DASHBOARD_CROWD_FAVORITE_PATH,
+  DASHBOARD_PATH,
+  LOGIN_PATH,
+  PARTICIPANT,
+  TEN_MINUTES,
+  USERS_TABLE,
+} from "@/constants";
+import { isWithinRateLimit, RATE_LIMIT_TOO_MANY_ATTEMPTS } from "@/lib/rate-limit.lib";
 import { getAuthenticatedUser, requireRole, getConfig } from "@/lib/server";
 import type { ActionResult, CrowdFavoriteProject } from "@/types";
 
 import { getCrowdFavoriteProjectForUser } from "../_lib";
 import { crowdFavoriteOptInFormSchema, type CrowdFavoriteOptInFormSchema } from "../_schemas";
 import { isCrowdFavoriteOptInOpen } from "../constants";
+
+// Same limit as verifyTeamMemberEmail, on the same rate-limit key (one call per email checked).
+const EMAIL_LOOKUP_LIMIT = 30;
 
 type CrowdFavoriteOptInResult = ActionResult<CrowdFavoriteOptInFormSchema>;
 
@@ -59,12 +70,22 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       };
     }
 
+    for (let i = 0; i < normalizedEmails.length; i += 1) {
+      if (!(await isWithinRateLimit(`email-lookup:${caller.id}`, EMAIL_LOOKUP_LIMIT, TEN_MINUTES))) {
+        return { success: false, error: RATE_LIMIT_TOO_MANY_ATTEMPTS, field: "team_members" };
+      }
+    }
+
+    // Match registered participants only, and use one message for every other case, so the
+    // form cannot tell whether an email belongs to an admin, judge, or mentor.
     const candidateResults = await Promise.all(
       normalizedEmails.map((email) =>
         supabaseAdmin
           .from(USERS_TABLE)
           .select("id, role, first_name")
           .eq("email", email)
+          .eq("role", PARTICIPANT)
+          .not("first_name", "is", null)
           .limit(1)
           .maybeSingle()
           .throwOnError()
@@ -76,30 +97,14 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       const { data: user } = candidateResults[index];
       const email = normalizedEmails[index];
 
-      if (!user) {
-        return { success: false, error: `No participant found for ${email}`, field: "team_members" };
-      }
-
-      if (user.role !== PARTICIPANT) {
-        return {
-          success: false,
-          error: `${email} is not a participant`,
-          field: "team_members",
-        };
+      if (!user || !user.first_name) {
+        return { success: false, error: `No registered participant found for ${email}`, field: "team_members" };
       }
 
       if (await getCrowdFavoriteProjectForUser(user.id)) {
         return {
           success: false,
           error: `${email} is already assigned to a crowd favorite project`,
-          field: "team_members",
-        };
-      }
-
-      if (!user.first_name) {
-        return {
-          success: false,
-          error: `${email} has an incomplete participant profile`,
           field: "team_members",
         };
       }

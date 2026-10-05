@@ -3,7 +3,15 @@
 import { PostgrestError } from "@supabase/supabase-js";
 
 import supabaseAdmin from "@/config/supabase-admin";
-import { TEAM_MATCHING_INTAKE_TABLE, USERS_TABLE, LOGIN_PATH, DASHBOARD_PATH, PARTICIPANT } from "@/constants";
+import {
+  TEAM_MATCHING_INTAKE_TABLE,
+  USERS_TABLE,
+  LOGIN_PATH,
+  DASHBOARD_PATH,
+  PARTICIPANT,
+  TEN_MINUTES,
+} from "@/constants";
+import { isWithinRateLimit, RATE_LIMIT_TOO_MANY_ATTEMPTS } from "@/lib/rate-limit.lib";
 import { getAuthenticatedUser, getConfig, requireRole } from "@/lib/server";
 import type { ActionResult } from "@/types";
 
@@ -39,6 +47,8 @@ const VALID_SKILLS = [
 ] as const;
 const MAX_REQUIRED_TEAMMATES = 3;
 const MAX_ADDITIONAL_NOTES_LENGTH = 1000;
+// Same limit as verifyTeammateEmail, on the same rate-limit key.
+const EMAIL_LOOKUP_LIMIT = 30;
 
 export type TeamMatchingIntakeData = {
   experience_level: string;
@@ -150,14 +160,30 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
 
     const now = Date.now();
 
-    // Look up the teammates' user IDs from their emails. Only participants can be teammates.
+    const { data: existingIntake } = await supabaseAdmin
+      .from(TEAM_MATCHING_INTAKE_TABLE)
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle()
+      .throwOnError();
+    if (existingIntake) {
+      return { success: false, error: "You have already submitted the team matching survey." };
+    }
+
+    // Look up the teammates' user IDs from their emails. Only registered participants can be
+    // teammates. The lookup shares the email lookup rate limit, so it cannot be used to test emails.
     let requiredTeammateIds: string[] = [];
     if (teammateEmails.length > 0) {
+      if (!(await isWithinRateLimit(`email-lookup:${userId}`, EMAIL_LOOKUP_LIMIT, TEN_MINUTES))) {
+        return { success: false, error: RATE_LIMIT_TOO_MANY_ATTEMPTS };
+      }
+
       const { data: teammates } = await supabaseAdmin
         .from(USERS_TABLE)
         .select("id, email")
         .in("email", teammateEmails)
         .eq("role", PARTICIPANT)
+        .not("first_name", "is", null)
         .throwOnError();
       const idByEmail = new Map((teammates ?? []).map((row) => [row.email as string, row.id as string]));
       if (teammateEmails.some((email) => !idByEmail.has(email))) {

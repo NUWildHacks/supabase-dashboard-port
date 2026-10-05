@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_rethrow } from "next/navigation";
 
 import { createSupabaseServerClient } from "@/config/supabase-server";
 import type { User } from "@/types";
@@ -33,6 +34,8 @@ export async function verifySession() {
 
     return { id: user.id, email: user.email } as Pick<User, "id" | "email">;
   } catch (e) {
+    // Let Next.js handle its own signals (for example, the one that marks a page as dynamic).
+    unstable_rethrow(e);
     const errorMessage = e instanceof Error ? e.message : "An unknown error occurred";
     console.error(errorMessage);
 

@@ -37,6 +37,14 @@ export const uploadAssignments = async (
       return { success: false, error: `${firstIssue?.message ?? "Invalid CSV data"}${location}` };
     }
 
+    const wrongRoundRow = parsed.data.findIndex((row) => row.judging_round !== uploadRound);
+    if (wrongRoundRow !== -1) {
+      return {
+        success: false,
+        error: `Row ${wrongRoundRow + 1} is for ${parsed.data[wrongRoundRow].judging_round}, but you are uploading ${uploadRound}`,
+      };
+    }
+
     const projects: Project[] = [];
     const judgingAssignments: Pick<JudgingAssignment, "judge_id" | "project_id" | "order" | "room_id">[] = [];
 

@@ -25,27 +25,28 @@ export const deleteUsers = async (userIds: User["id"][]): Promise<DeleteUsersRes
       return { success: false, error: "You cannot delete yourself. Please withdraw from the event instead." };
     }
 
-    const resumePaths = await getResumeStoragePaths(userIds);
-
+    // Finish each group (rows, resume files, sign-in accounts) before the next one, so a failure
+    // part way through never leaves files or accounts behind for users that are already gone.
+    let failedAuthDeletes = 0;
     for (const ids of chunkList(userIds)) {
+      const resumePaths = await getResumeStoragePaths(ids);
       await supabaseAdmin.from(USERS_TABLE).delete().in("id", ids).throwOnError();
-    }
-    await removeResumeFiles(resumePaths);
+      await removeResumeFiles(resumePaths);
 
-    // Pre-created rows (keyed by email before first login) have no auth user, so skip ids that
-    // are not auth user ids and ignore "user not found" errors. Try every account, then report
-    // the ones that failed; their users rows are already gone, so they can no longer use the app.
-    const authResults = await Promise.allSettled(
-      userIds.filter(isAuthUserIdFormat).map(async (userId) => {
-        const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
-        if (error && error.status !== 404 && error.code !== "user_not_found") throw error;
-      })
-    );
-    const failedAuthDeletes = authResults.filter((result) => result.status === "rejected").length;
+      // Pre-created rows (keyed by email before first login) have no auth user, so skip ids that
+      // are not auth user ids and ignore "user not found" errors.
+      const authResults = await Promise.allSettled(
+        ids.filter(isAuthUserIdFormat).map(async (userId) => {
+          const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
+          if (error && error.status !== 404 && error.code !== "user_not_found") throw error;
+        })
+      );
+      failedAuthDeletes += authResults.filter((result) => result.status === "rejected").length;
+    }
     if (failedAuthDeletes > 0) {
       revalidatePath(DASHBOARD_MANAGE_USERS_PATH);
       throw new Error(
-        `Deleted the users, but ${failedAuthDeletes} sign-in account(s) could not be removed. Try again.`
+        `Deleted the users, but ${failedAuthDeletes} sign-in account(s) could not be removed. Remove them in the Supabase dashboard (Authentication > Users).`
       );
     }
 

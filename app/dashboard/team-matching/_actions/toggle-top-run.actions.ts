@@ -7,6 +7,7 @@ import {
   LOGIN_PATH,
   TEAM_MATCHING_RUNS_TABLE,
   TEAM_MATCHING_RUNS_TABLE_PROD,
+  WILDHACKS_CONFIG_TABLE,
 } from "@/constants";
 import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { ActionResult, TeamMatchingMode } from "@/types";
@@ -21,6 +22,16 @@ export const toggleTopRun = async (
     const user = await getAuthenticatedUser(redirectPath);
     const roleCheck = requireRole(user, ADMIN);
     if (roleCheck) return roleCheck;
+
+    // Same rule as the button: top choices are fixed once results are released for this mode.
+    const { data: config } = await supabaseAdmin
+      .from(WILDHACKS_CONFIG_TABLE)
+      .select("results_released, results_released_dev")
+      .eq("id", "config")
+      .maybeSingle()
+      .throwOnError();
+    const released = mode === "prod" ? config?.results_released : config?.results_released_dev;
+    if (released) return { success: false, error: "Unrelease the results before changing top choices." };
 
     const table = mode === "prod" ? TEAM_MATCHING_RUNS_TABLE_PROD : TEAM_MATCHING_RUNS_TABLE;
     const { data } = await supabaseAdmin

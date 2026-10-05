@@ -38,6 +38,18 @@ export const registerUser = async (
       return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid registration data" };
     }
 
+    // Registration fills in a new row once. Afterwards, profile changes go through editProfile,
+    // which allows fewer fields.
+    const { data: ownRow } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("role, first_name, last_name")
+      .eq("id", userId)
+      .maybeSingle()
+      .throwOnError();
+    if (ownRow && (ownRow.role !== PARTICIPANT || ownRow.first_name || ownRow.last_name)) {
+      return { success: false, error: "You are already registered." };
+    }
+
     const { end_time, max_participants } = await getConfig();
 
     if (now >= end_time) {

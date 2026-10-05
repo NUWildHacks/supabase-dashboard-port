@@ -31,6 +31,7 @@ export const verifyTeammateEmail = async (email: string): Promise<VerifyTeammate
       .select("first_name")
       .eq("email", String(email).toLowerCase().trim())
       .eq("role", PARTICIPANT)
+      .not("first_name", "is", null)
       .limit(1)
       .maybeSingle()
       .throwOnError();

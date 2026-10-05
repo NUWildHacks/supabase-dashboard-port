@@ -74,7 +74,17 @@ async function fetchTopSuggestions(
     results.push({
       rank: (results.length + 1) as 1 | 2 | 3,
       team_id: team.id,
-      members: team.members,
+      // The card shows only names and roles, so do not send other members' survey answers.
+      members: team.members.map(({ user_id, name, roles }) => ({
+        user_id,
+        name,
+        roles,
+        skills: {},
+        experience_level: "",
+        work_style: "",
+        gender_preference: "",
+        where_staying: "",
+      })),
       score: team.score,
       match_reasons: team.match_reasons,
       where_to_meet: team.where_to_meet,

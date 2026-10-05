@@ -19,7 +19,7 @@ export const fromRow = <T>(row: Record<string, unknown>): T =>
  */
 export const fromRows = <T>(rows: Record<string, unknown>[] | null): T[] => (rows ?? []).map((row) => fromRow<T>(row));
 
-/** Supabase returns at most this many rows per request (`max_rows` in supabase/config.toml). */
+/** Rows asked for per request. The hosted `max_rows` setting may return fewer. */
 const PAGE_SIZE = 1000;
 
 /**
@@ -38,11 +38,14 @@ export const selectAllRows = async <T>(
 ): Promise<T[]> => {
   const rows: T[] = [];
 
-  for (let from = 0; ; from += PAGE_SIZE) {
+  // Continue from the last row received and stop only on an empty page, so a server limit below
+  // PAGE_SIZE never cuts the result short.
+  for (let from = 0; ; ) {
     const { data } = await queryPage(from, from + PAGE_SIZE - 1);
+    if (!data || data.length === 0) break;
 
-    rows.push(...(data ?? []));
-    if (!data || data.length < PAGE_SIZE) break;
+    rows.push(...data);
+    from += data.length;
   }
 
   return rows;

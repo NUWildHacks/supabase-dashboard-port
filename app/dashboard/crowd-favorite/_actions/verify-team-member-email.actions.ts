@@ -40,20 +40,17 @@ const verifyTeamMemberEmail = async (email: string): Promise<VerifyTeamMemberEma
       .select("id, first_name")
       .eq("email", normalizedEmail)
       .eq("role", PARTICIPANT)
+      .not("first_name", "is", null)
       .limit(1)
       .maybeSingle()
       .throwOnError();
 
-    if (!member) {
+    if (!member || !member.first_name) {
       return { success: false, error: "No participant found for this email" };
     }
 
     if (await getCrowdFavoriteProjectForUser(member.id)) {
       return { success: false, error: "This participant is already assigned to another crowd favorite project" };
-    }
-
-    if (!member.first_name) {
-      return { success: false, error: "Participant profile is incomplete" };
     }
 
     return {

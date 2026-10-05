@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/config/supabase-server";
 import { LOGIN_CLOSED_ERROR, LOGIN_FAILED_ERROR, LOGIN_PATH } from "@/constants";
 import { validateRedirectPath } from "@/lib";
+import { verifySession } from "@/lib/server";
 
 import { checkUserCanLogin } from "../../login/_lib/check-user-can-login";
 
@@ -31,6 +32,12 @@ export async function GET(request: NextRequest) {
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     console.error("OAuth code exchange error:", error.message);
+    return NextResponse.redirect(loginUrl(LOGIN_FAILED_ERROR));
+  }
+
+  // verifySession rejects accounts whose email is not confirmed.
+  if (!(await verifySession())) {
+    await supabase.auth.signOut();
     return NextResponse.redirect(loginUrl(LOGIN_FAILED_ERROR));
   }
 

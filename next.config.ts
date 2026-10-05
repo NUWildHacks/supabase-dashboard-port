@@ -29,6 +29,10 @@ const withMDX = createMDX({
 
 const nextConfig: NextConfig = {
   pageExtensions: ["js", "jsx", "ts", "tsx", "md", "mdx"],
+  experimental: {
+    // Resume uploads go through a server action and may be up to 5 MB (MAX_FILE_SIZE).
+    serverActions: { bodySizeLimit: "6mb" },
+  },
   async headers() {
     return [
       {
