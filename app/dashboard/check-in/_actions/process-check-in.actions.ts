@@ -1,8 +1,12 @@
 "use server";
 
+import { PostgrestError } from "@supabase/supabase-js";
+
 import supabaseAdmin from "@/config/supabase-admin";
 import { ADMIN, EVENT_CHECK_INS_TABLE, EVENTS_TABLE, USERS_TABLE } from "@/constants";
-import { fromRow, getAuthenticatedUser, requireRole } from "@/lib";
+import { fromRow } from "@/lib";
+import { isValidCheckInSignature } from "@/lib/check-in-code.lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { CheckInActionResponse, EventCheckIn, QRCodeScanPayload, User } from "@/types";
 
 import { getCheckInRedirectPath, isAllowedScannableRole, parseScanPayload, WILDHACKS_EVENT_ID } from "./helpers";
@@ -30,12 +34,12 @@ export const processCheckIn = async ({ eventId, scanPayload }: ProcessCheckInInp
 
     // Skip event validation for WildHacks main event
     if (normalizedEventId !== WILDHACKS_EVENT_ID) {
-      const { data: event, error: eventError } = await supabaseAdmin
+      const { data: event } = await supabaseAdmin
         .from(EVENTS_TABLE)
         .select("category")
         .eq("id", normalizedEventId)
-        .maybeSingle();
-      if (eventError) throw eventError;
+        .maybeSingle()
+        .throwOnError();
       if (!event) {
         return { success: false, error: "Selected event does not exist" };
       }
@@ -50,13 +54,19 @@ export const processCheckIn = async ({ eventId, scanPayload }: ProcessCheckInInp
     }
 
     const payload = parsedPayloadResult.payload;
+    if (!isValidCheckInSignature(payload.user_id, payload.sig)) {
+      return {
+        success: false,
+        error: "This QR code is not valid. Ask the attendee to open it again from the dashboard.",
+      };
+    }
 
-    const { data: userRow, error: userError } = await supabaseAdmin
+    const { data: userRow } = await supabaseAdmin
       .from(USERS_TABLE)
       .select()
       .eq("id", payload.user_id)
-      .maybeSingle();
-    if (userError) throw userError;
+      .maybeSingle()
+      .throwOnError();
     if (!userRow) {
       return { success: false, error: "Scanned user does not exist" };
     }
@@ -73,12 +83,12 @@ export const processCheckIn = async ({ eventId, scanPayload }: ProcessCheckInInp
 
     if (normalizedEventId !== WILDHACKS_EVENT_ID) {
       const wildhacksCheckInId = `${WILDHACKS_EVENT_ID}_${payload.user_id}`;
-      const { data: wildhacksCheckIn, error: wildhacksCheckInError } = await supabaseAdmin
+      const { data: wildhacksCheckIn } = await supabaseAdmin
         .from(EVENT_CHECK_INS_TABLE)
         .select("id")
         .eq("id", wildhacksCheckInId)
-        .maybeSingle();
-      if (wildhacksCheckInError) throw wildhacksCheckInError;
+        .maybeSingle()
+        .throwOnError();
 
       if (!wildhacksCheckIn) {
         return {
@@ -101,26 +111,28 @@ export const processCheckIn = async ({ eventId, scanPayload }: ProcessCheckInInp
       user_id: payload.user_id,
       checked_in_at: now,
       checked_in_by: adminUser.id,
+      // Store only values read from the database, never fields copied from the scanned code.
       scan_payload: {
-        ...payload,
+        user_id: payload.user_id,
         full_name: fullName || undefined,
-        email: payload.email ?? scannedUser.email,
-        role: payload.role ?? scannedUser.role,
+        email: scannedUser.email,
+        role: scannedUser.role,
       },
       created_at: now,
       updated_at: now,
     };
 
-    const { error: insertError } = await supabaseAdmin.from(EVENT_CHECK_INS_TABLE).insert(checkInRecord);
-    if (insertError) {
+    try {
+      await supabaseAdmin.from(EVENT_CHECK_INS_TABLE).insert(checkInRecord).throwOnError();
+    } catch (insertError) {
       // Postgres error code 23505 = unique_violation — a concurrent scan won the race
-      if (insertError.code === "23505") {
-        const { data: existingRow, error: existingError } = await supabaseAdmin
+      if (insertError instanceof PostgrestError && insertError.code === "23505") {
+        const { data: existingRow } = await supabaseAdmin
           .from(EVENT_CHECK_INS_TABLE)
           .select()
           .eq("id", checkInId)
-          .single();
-        if (existingError) throw existingError;
+          .single()
+          .throwOnError();
 
         const existingData = fromRow<EventCheckIn>(existingRow);
         const existingCheckIn: EventCheckIn = {

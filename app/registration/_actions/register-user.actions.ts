@@ -4,18 +4,20 @@ import { redirect } from "next/navigation";
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { USERS_TABLE, PARTICIPANT, LOGIN_PATH, REGISTRATION_PATH, PARTICIPANT_USER_FIELDS } from "@/constants";
-import { verifySession } from "@/lib";
+import { isAuthUserId } from "@/lib/auth-user.lib";
+import { getConfig, verifySession } from "@/lib/server";
 import type { ActionResult, WildHacksConfig } from "@/types";
 
-import { type RegistrationFormSchema } from "../_schemas/registration-form.schemas";
+import { registrationFormSchema, type RegistrationFormSchema } from "../_schemas/registration-form.schemas";
+import { checkUserCanLogin } from "../../login/_lib/check-user-can-login";
 
 export type RegisterUserResult = ActionResult<RegistrationFormSchema>;
 
 export const registerUser = async (
   data: RegistrationFormSchema,
   _start_time: WildHacksConfig["start_time"],
-  end_time: WildHacksConfig["end_time"],
-  max_participants: WildHacksConfig["max_participants"],
+  _end_time: WildHacksConfig["end_time"],
+  _max_participants: WildHacksConfig["max_participants"],
   _registration_deadline: WildHacksConfig["registration_deadline"]
 ): Promise<RegisterUserResult> => {
   const userInfo = await verifySession();
@@ -26,42 +28,65 @@ export const registerUser = async (
   const now = Date.now();
 
   try {
+    // A Supabase session can be created without the OAuth callback, so check the login rule again.
+    const gate = await checkUserCanLogin();
+    if (!gate.success) return { success: false, error: gate.error };
+
+    // Never trust the client: validate the form and read the limits from the database.
+    const parsed = registrationFormSchema.safeParse(data);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid registration data" };
+    }
+
+    const { end_time, max_participants } = await getConfig();
+
     if (now >= end_time) {
       throw new Error("The event has ended");
     }
 
-    const { ...rest } = data;
-
-    const { count: participantCount, error: countError } = await supabaseAdmin
-      .from(USERS_TABLE)
-      .select("id", { count: "exact", head: true })
-      .eq(PARTICIPANT_USER_FIELDS.role, PARTICIPANT);
-    if (countError) throw countError;
-    if ((participantCount ?? 0) >= max_participants) {
-      throw new Error("The event is full");
-    }
-
-    const { data: emailRows, error: emailError } = await supabaseAdmin
+    const { data: emailRows } = await supabaseAdmin
       .from(USERS_TABLE)
       .select("id")
       .eq(PARTICIPANT_USER_FIELDS.email, userInfo.email)
-      .limit(1);
-    if (emailError) throw emailError;
+      .neq("id", userId)
+      .limit(1)
+      .throwOnError();
+    const emailRowId: string | undefined = emailRows[0]?.id;
 
-    const { error: upsertError } = await supabaseAdmin.from(USERS_TABLE).upsert({
-      ...rest,
-      id: userId,
-      role: PARTICIPANT,
-      created_at: now,
-      updated_at: now,
-    });
-    if (upsertError) throw upsertError;
+    // A row with this email that belongs to another sign-in account is a real registration,
+    // not a pre-created row. Refuse instead of deleting that account's data.
+    if (emailRowId && (await isAuthUserId(emailRowId))) {
+      return {
+        success: false,
+        error: "This email is already registered. Sign in with the account you used before.",
+      };
+    }
 
-    // Delete the pre-created email row, but never the row that was just written.
-    const emailRowId = emailRows?.[0]?.id;
-    if (emailRowId && emailRowId !== userId) {
-      const { error: deleteError } = await supabaseAdmin.from(USERS_TABLE).delete().eq("id", emailRowId);
-      if (deleteError) throw deleteError;
+    // Checks the participant limit, writes the row, and removes the pre-created email row in one
+    // transaction.
+    const { data: outcome } = await supabaseAdmin
+      .rpc("register_participant", {
+        p_row: {
+          ...parsed.data,
+          email: userInfo.email,
+          id: userId,
+          role: PARTICIPANT,
+          created_at: now,
+          updated_at: now,
+        },
+        p_precreated_id: emailRowId ?? null,
+        p_max_participants: max_participants,
+      })
+      .throwOnError();
+
+    if (outcome === "full") {
+      return { success: false, error: "The event is full" };
+    }
+    if (outcome === "role_conflict") {
+      return { success: false, error: "This account is not a participant account." };
+    }
+    if (outcome !== "registered") {
+      throw new Error(`Unexpected registration result: ${String(outcome)}`);
     }
 
     return { success: true };

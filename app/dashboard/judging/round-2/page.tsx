@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { DASHBOARD_JUDGING_ROUND_2_PATH, DASHBOARD_PATH, JUDGE, JUDGE_AND_MENTOR, LOGIN_PATH } from "@/constants";
-import { getAuthenticatedUser } from "@/lib";
+import { getAuthenticatedUser } from "@/lib/server";
 
 import { JudgingDisplay } from "../_components";
 import { ROUND_2 } from "../constants";

@@ -7,8 +7,9 @@ import {
   LOGIN_PATH,
   TEAM_MATCHING_RUNS_TABLE,
   TEAM_MATCHING_RUNS_TABLE_PROD,
+  WILDHACKS_CONFIG_TABLE,
 } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { ActionResult, TeamMatchingMode } from "@/types";
 
 export const deleteRun = async (runId: string, mode: TeamMatchingMode = "dev"): Promise<ActionResult> => {
@@ -20,12 +21,12 @@ export const deleteRun = async (runId: string, mode: TeamMatchingMode = "dev"): 
 
     const runsTable = mode === "prod" ? TEAM_MATCHING_RUNS_TABLE_PROD : TEAM_MATCHING_RUNS_TABLE;
 
-    const { data: run, error: runError } = await supabaseAdmin
+    const { data: run } = await supabaseAdmin
       .from(runsTable)
       .select("is_top")
       .eq("id", runId)
-      .maybeSingle();
-    if (runError) throw runError;
+      .maybeSingle()
+      .throwOnError();
 
     if (!run) return { success: false, error: "Run not found." };
     if (run.is_top === true) {
@@ -33,8 +34,16 @@ export const deleteRun = async (runId: string, mode: TeamMatchingMode = "dev"): 
     }
 
     // Deleting the run row cascades to its teams and formations
-    const { error: deleteError } = await supabaseAdmin.from(runsTable).delete().eq("id", runId);
-    if (deleteError) throw deleteError;
+    await supabaseAdmin.from(runsTable).delete().eq("id", runId).throwOnError();
+
+    // Clear the active run for this mode if it pointed at the deleted run.
+    const activeRunColumn = mode === "prod" ? "active_matching_run_id" : "active_matching_run_id_dev";
+    await supabaseAdmin
+      .from(WILDHACKS_CONFIG_TABLE)
+      .update({ [activeRunColumn]: null })
+      .eq("id", "config")
+      .eq(activeRunColumn, runId)
+      .throwOnError();
 
     return { success: true };
   } catch (error) {

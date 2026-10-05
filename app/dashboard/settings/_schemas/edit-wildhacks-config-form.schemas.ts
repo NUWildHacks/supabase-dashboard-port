@@ -7,15 +7,21 @@ export const editWildhacksConfigFormSchema = z
     max_team_size: z
       .string()
       .min(1, "Max team size is required")
-      .refine((val) => Number(val) >= 1 && Number(val) <= 10, "Max team size must be between 1 and 10"),
+      .refine((val) => Number(val) >= 1 && Number(val) <= 10, "Max team size must be between 1 and 10")
+      .refine((val) => Number.isInteger(Number(val)), "Max team size must be a whole number"),
     max_participants: z
       .string()
       .min(1, "Max participants is required")
-      .refine((val) => Number(val) >= 1, "Max participants must be at least 1"),
-    registration_deadline: z.number().min(1, { message: "Registration deadline must be milliseconds since epoch" }),
-    start_time: z.number().min(1, { message: "Start time must be milliseconds since epoch" }),
-    submission_deadline: z.number().min(1, { message: "Submission deadline must be milliseconds since epoch" }),
-    end_time: z.number().min(1, { message: "End time must be milliseconds since epoch" }),
+      .refine((val) => Number(val) >= 1, "Max participants must be at least 1")
+      .refine((val) => Number.isInteger(Number(val)), "Max participants must be a whole number")
+      .refine((val) => Number(val) <= 2147483647, "Max participants is too large"),
+    registration_deadline: z
+      .number()
+      .int()
+      .min(1, { message: "Registration deadline must be milliseconds since epoch" }),
+    start_time: z.number().int().min(1, { message: "Start time must be milliseconds since epoch" }),
+    submission_deadline: z.number().int().min(1, { message: "Submission deadline must be milliseconds since epoch" }),
+    end_time: z.number().int().min(1, { message: "End time must be milliseconds since epoch" }),
     crowd_favorite_password: z
       .string()
       .min(1, "Crowd favorite password is required")

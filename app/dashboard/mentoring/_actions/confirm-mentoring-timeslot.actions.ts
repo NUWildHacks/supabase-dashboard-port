@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { DASHBOARD_MENTORING_PATH, JUDGE_AND_MENTOR, LOGIN_PATH, MENTORING_TIMESLOTS, USERS_TABLE } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { ActionResult, MentoringTimeslot } from "@/types";
 
 import { TIMESLOT_CONFIRMATION_DEADLINE } from "../constants";
@@ -31,14 +31,14 @@ export const confirmMentoringTimeslot = async (
       return { success: false, error: "Invalid mentoring timeslot selected." };
     }
 
-    const { error } = await supabaseAdmin
+    await supabaseAdmin
       .from(USERS_TABLE)
       .update({
         mentoring_timeslot: selectedMentoringTimeslot,
         updated_at: now,
       })
-      .eq("id", user.id);
-    if (error) throw error;
+      .eq("id", user.id)
+      .throwOnError();
 
     revalidatePath(DASHBOARD_MENTORING_PATH);
 

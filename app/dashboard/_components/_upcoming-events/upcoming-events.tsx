@@ -14,7 +14,7 @@ import { useItemDialog } from "@/hooks";
 import { EventsList } from "..";
 
 const UpcomingEvents = () => {
-  const useEventsReturn = useEvents({ limitCount: 3 });
+  const useEventsReturn = useEvents({ limitCount: 3, upcomingOnly: true });
   const { events, isLoading } = useEventsReturn;
 
   const upcomingEvents = events.filter((event) => event.end_time > Date.now());

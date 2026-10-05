@@ -4,12 +4,14 @@ import { revalidatePath } from "next/cache";
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { DASHBOARD_MANAGE_USERS_PATH, ADMIN, LOGIN_PATH, USERS_TABLE } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { chunkList } from "@/lib";
+import { isAuthUserIdFormat } from "@/lib/auth-user.lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { ActionResult, User } from "@/types";
 
-export type DeleteUsersResult = ActionResult;
+import { getResumeStoragePaths, removeResumeFiles } from "../../_lib/resume";
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export type DeleteUsersResult = ActionResult;
 
 export const deleteUsers = async (userIds: User["id"][]): Promise<DeleteUsersResult> => {
   try {
@@ -23,19 +25,29 @@ export const deleteUsers = async (userIds: User["id"][]): Promise<DeleteUsersRes
       return { success: false, error: "You cannot delete yourself. Please withdraw from the event instead." };
     }
 
-    const { error: deleteError } = await supabaseAdmin.from(USERS_TABLE).delete().in("id", userIds);
-    if (deleteError) throw deleteError;
+    const resumePaths = await getResumeStoragePaths(userIds);
+
+    for (const ids of chunkList(userIds)) {
+      await supabaseAdmin.from(USERS_TABLE).delete().in("id", ids).throwOnError();
+    }
+    await removeResumeFiles(resumePaths);
 
     // Pre-created rows (keyed by email before first login) have no auth user, so skip ids that
-    // are not auth user ids and ignore "user not found" errors, like Firebase's deleteUsers did.
-    await Promise.all(
-      userIds
-        .filter((userId) => UUID_REGEX.test(userId))
-        .map(async (userId) => {
-          const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
-          if (error && error.status !== 404 && error.code !== "user_not_found") throw error;
-        })
+    // are not auth user ids and ignore "user not found" errors. Try every account, then report
+    // the ones that failed; their users rows are already gone, so they can no longer use the app.
+    const authResults = await Promise.allSettled(
+      userIds.filter(isAuthUserIdFormat).map(async (userId) => {
+        const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
+        if (error && error.status !== 404 && error.code !== "user_not_found") throw error;
+      })
     );
+    const failedAuthDeletes = authResults.filter((result) => result.status === "rejected").length;
+    if (failedAuthDeletes > 0) {
+      revalidatePath(DASHBOARD_MANAGE_USERS_PATH);
+      throw new Error(
+        `Deleted the users, but ${failedAuthDeletes} sign-in account(s) could not be removed. Try again.`
+      );
+    }
 
     revalidatePath(DASHBOARD_MANAGE_USERS_PATH);
 

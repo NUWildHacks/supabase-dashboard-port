@@ -1,5 +1,6 @@
 import supabaseAdmin from "@/config/supabase-admin";
 import { EVENTS_TABLE } from "@/constants";
+import { selectAllRows } from "@/lib";
 
 import type { CheckInEventOption } from "../types";
 
@@ -23,8 +24,14 @@ const normalizeText = (value: unknown, fallback: string): string => {
 };
 
 export const getCheckInEvents = async (): Promise<CheckInEventOption[]> => {
-  const { data, error } = await supabaseAdmin.from(EVENTS_TABLE).select("id, title, location, start_time, end_time");
-  if (error) throw error;
+  const data = await selectAllRows((from, to) =>
+    supabaseAdmin
+      .from(EVENTS_TABLE)
+      .select("id, title, location, start_time, end_time")
+      .order("id")
+      .range(from, to)
+      .throwOnError()
+  );
 
   return ((data ?? []) as CheckInEventRow[])
     .map((eventData) => {

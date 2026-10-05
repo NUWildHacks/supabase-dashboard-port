@@ -4,15 +4,29 @@ import { revalidatePath } from "next/cache";
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT, RESUMES_BUCKET, RESUMES_TABLE } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { getAuthenticatedUser, getConfig, requireRole } from "@/lib/server";
 import { ActionResult } from "@/types";
 
 import { MAX_FILE_SIZE, RESUME_MIME_TYPE } from "../constants";
 import { ResumeMetadata } from "../types";
 
+/**
+ * Supabase Storage only accepts ASCII letters, digits, and a few symbols in object names.
+ * Strip accents ("José" -> "Jose") and replace any other character with "_".
+ */
+const toStorageSafeName = (fileName: string) =>
+  fileName
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9 ._'()-]/g, "_");
+
+// Every PDF file starts with these bytes.
+const PDF_SIGNATURE = Buffer.from("%PDF-");
+
 export const uploadResume = async (resume: File): Promise<ActionResult> => {
   const now = Date.now();
 
+  if (!(resume instanceof File)) return { success: false, error: "Only PDFs are allowed" };
   if (resume.type !== RESUME_MIME_TYPE) return { success: false, error: "Only PDFs are allowed" };
   if (resume.size > MAX_FILE_SIZE) return { success: false, error: "File exceeds 5MB limit" };
 
@@ -24,27 +38,27 @@ export const uploadResume = async (resume: File): Promise<ActionResult> => {
     const roleError = requireRole(user, PARTICIPANT, "You are not authorized to upload a resume");
     if (roleError) return roleError;
 
+    const { end_time } = await getConfig();
+    if (now >= end_time) return { success: false, error: "Resume uploads are closed" };
+
+    // The browser sets the file type, so also check that the content is a PDF.
+    const buffer = Buffer.from(await resume.arrayBuffer());
+    if (!buffer.subarray(0, PDF_SIGNATURE.length).equals(PDF_SIGNATURE)) {
+      return { success: false, error: "Only PDFs are allowed" };
+    }
+
     const bucket = supabaseAdmin.storage.from(RESUMES_BUCKET);
     const newFileName = `${first_name} ${last_name} - Resume.pdf`;
-    const newStoragePath = `${id}/${newFileName}`;
+    const newStoragePath = `${id}/${toStorageSafeName(newFileName)}`;
 
-    const { data: resumeRow, error: resumeError } = await supabaseAdmin
+    const { data: resumeRow } = await supabaseAdmin
       .from(RESUMES_TABLE)
       .select()
       .eq("id", id)
-      .maybeSingle();
-    if (resumeError) throw resumeError;
+      .maybeSingle()
+      .throwOnError();
 
-    if (resumeRow) {
-      const { storage_path: oldStoragePath } = resumeRow as Omit<ResumeMetadata, "id">;
-
-      if (oldStoragePath !== newStoragePath) {
-        const { error: removeError } = await bucket.remove([oldStoragePath]);
-        if (removeError) throw removeError;
-      }
-    }
-
-    const buffer = Buffer.from(await resume.arrayBuffer());
+    // Upload first so a failed upload never leaves the row pointing at a deleted file.
     const { error: uploadError } = await bucket.upload(newStoragePath, buffer, {
       contentType: RESUME_MIME_TYPE,
       upsert: true,
@@ -52,24 +66,32 @@ export const uploadResume = async (resume: File): Promise<ActionResult> => {
     if (uploadError) throw uploadError;
 
     if (resumeRow) {
-      const { error: updateError } = await supabaseAdmin
+      await supabaseAdmin
         .from(RESUMES_TABLE)
         .update({
           file_name: newFileName,
           storage_path: newStoragePath,
           updated_at: now,
         } as Omit<ResumeMetadata, "id" | "created_at">)
-        .eq("id", id);
-      if (updateError) throw updateError;
+        .eq("id", id)
+        .throwOnError();
+
+      const { storage_path: oldStoragePath } = resumeRow as Omit<ResumeMetadata, "id">;
+      if (oldStoragePath !== newStoragePath) {
+        const { error: removeError } = await bucket.remove([oldStoragePath]);
+        if (removeError) console.error(`Old resume ${oldStoragePath} remove failed — orphaned file:`, removeError);
+      }
     } else {
-      const { error: insertError } = await supabaseAdmin.from(RESUMES_TABLE).upsert({
-        id,
-        file_name: newFileName,
-        storage_path: newStoragePath,
-        created_at: now,
-        updated_at: now,
-      } as ResumeMetadata);
-      if (insertError) throw insertError;
+      await supabaseAdmin
+        .from(RESUMES_TABLE)
+        .upsert({
+          id,
+          file_name: newFileName,
+          storage_path: newStoragePath,
+          created_at: now,
+          updated_at: now,
+        } as ResumeMetadata)
+        .throwOnError();
     }
 
     revalidatePath(DASHBOARD_PATH);

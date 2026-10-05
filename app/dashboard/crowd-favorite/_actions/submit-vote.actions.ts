@@ -9,13 +9,19 @@ import {
   DASHBOARD_PATH,
   LOGIN_PATH,
   PARTICIPANT,
+  TEN_MINUTES,
 } from "@/constants";
-import { getAuthenticatedUser, getConfig, getSecrets, requireRole } from "@/lib";
+import { isWithinRateLimit, RATE_LIMIT_TOO_MANY_ATTEMPTS } from "@/lib/rate-limit.lib";
+import { getSecrets } from "@/lib/secrets.lib";
+import { getAuthenticatedUser, getConfig, requireRole } from "@/lib/server";
 import type { ActionResult } from "@/types";
 
 import { getCrowdFavoriteProject } from "../_lib";
 import { crowdFavoriteVoteFormSchema, type CrowdFavoriteVoteFormSchema } from "../_schemas/vote-form.schemas";
 import { isCrowdFavoriteVotingOpen } from "../constants";
+
+// The voting password is shared, so limit how often one account can try it.
+const PASSWORD_ATTEMPT_LIMIT = 10;
 
 type SubmitCrowdFavoriteVoteResult = ActionResult<CrowdFavoriteVoteFormSchema>;
 
@@ -49,6 +55,10 @@ const submitCrowdFavoriteVote = async (
 
     const data = parsed.data;
 
+    if (!(await isWithinRateLimit(`vote-password:${caller.id}`, PASSWORD_ATTEMPT_LIMIT, TEN_MINUTES))) {
+      return { success: false, error: RATE_LIMIT_TOO_MANY_ATTEMPTS, field: "crowd_favorite_password" };
+    }
+
     if (secrets.crowd_favorite_password !== data.crowd_favorite_password) {
       return {
         success: false,
@@ -65,13 +75,13 @@ const submitCrowdFavoriteVote = async (
     }
 
     // The primary key on user_id allows one vote per user, so the upsert replaces any previous vote.
-    const { error: voteError } = await supabaseAdmin
+    await supabaseAdmin
       .from(CROWD_FAVORITE_VOTES_TABLE)
       .upsert(
         { user_id: caller.id, crowd_favorite_id: data.selected_project_id, created_at: now },
         { onConflict: "user_id" }
-      );
-    if (voteError) throw voteError;
+      )
+      .throwOnError();
 
     revalidatePath(DASHBOARD_CROWD_FAVORITE_PATH);
     revalidatePath(DASHBOARD_PATH);

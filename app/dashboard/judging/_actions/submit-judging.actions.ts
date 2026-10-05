@@ -12,10 +12,10 @@ import {
   DASHBOARD_JUDGING_ROUND_2_PATH,
   JUDGE_AND_MENTOR,
 } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { ActionResult, JudgeUser } from "@/types";
 
-import { type JudgingFormSchema } from "../_schemas";
+import { judgingFormSchema, type JudgingFormSchema } from "../_schemas";
 import type { JudgingAssignment, JudgingForm, JudgingRound, Project } from "../types";
 
 export type SubmitJudgingResult = ActionResult<JudgingFormSchema>;
@@ -51,13 +51,18 @@ export const submitJudging = async (
       };
     }
 
-    const { data: project, error: projectError } = await supabaseAdmin
+    const parsed = judgingFormSchema.safeParse(data);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid judging form" };
+    }
+
+    const { data: project } = await supabaseAdmin
       .from(PROJECTS_TABLE)
       .select("id")
       .eq("judging_round", judgingRound)
       .eq("id", projectId)
-      .maybeSingle();
-    if (projectError) throw projectError;
+      .maybeSingle()
+      .throwOnError();
     if (!project) {
       return {
         success: false,
@@ -65,13 +70,15 @@ export const submitJudging = async (
       };
     }
 
-    const { data: judgingAssignment, error: judgingAssignmentError } = await supabaseAdmin
+    const { data: judgingAssignment } = await supabaseAdmin
       .from(JUDGING_ASSIGNMENTS_TABLE)
       .select("judging_form")
       .eq("judging_round", judgingRound)
       .eq("id", assignmentId)
-      .maybeSingle();
-    if (judgingAssignmentError) throw judgingAssignmentError;
+      .eq("judge_id", user.id)
+      .eq("project_id", projectId)
+      .maybeSingle()
+      .throwOnError();
     if (!judgingAssignment) {
       return {
         success: false,
@@ -81,18 +88,26 @@ export const submitJudging = async (
 
     const existingForm = judgingAssignment.judging_form as JudgingAssignment["judging_form"];
 
-    const { error: updateError } = await supabaseAdmin
+    const { data: updatedAssignments } = await supabaseAdmin
       .from(JUDGING_ASSIGNMENTS_TABLE)
       .update({
         judging_form: {
-          ...data,
+          ...parsed.data,
           created_at: existingForm?.created_at ?? now,
           updated_at: now,
         } as Partial<JudgingForm>,
       } as Partial<JudgingAssignment>)
       .eq("judging_round", judgingRound)
-      .eq("id", assignmentId);
-    if (updateError) throw updateError;
+      .eq("id", assignmentId)
+      .eq("judge_id", user.id)
+      .select("id")
+      .throwOnError();
+    if (updatedAssignments.length === 0) {
+      return {
+        success: false,
+        error: "Judging assignment not found",
+      };
+    }
 
     revalidatePath(currentPath);
 

@@ -1,5 +1,4 @@
-"use server";
-
+import "server-only";
 import { redirect } from "next/navigation";
 
 import supabaseAdmin from "@/config/supabase-admin";
@@ -16,8 +15,7 @@ import {
 import type { ActionResult, JudgeUser, JudgeAndMentorUser, User } from "@/types";
 
 import { fromRow } from "./db.lib";
-
-import { verifySession } from ".";
+import { verifySession } from "./session.lib";
 
 /**
  * Get the authenticated user data.
@@ -43,8 +41,7 @@ const getAuthenticatedUser = async (redirectPath?: string): Promise<User> => {
 
   const { id } = userInfo;
 
-  const { data: userRow, error } = await supabaseAdmin.from(USERS_TABLE).select().eq("id", id).maybeSingle();
-  if (error) throw error;
+  const { data: userRow } = await supabaseAdmin.from(USERS_TABLE).select().eq("id", id).maybeSingle().throwOnError();
   if (!userRow) redirect(REGISTRATION_PATH);
 
   // check if this is a Kris-special permission participant
@@ -141,24 +138,28 @@ const requireRole = (
 const onboardUser = async (id: User["id"]): Promise<boolean> => {
   const now = Date.now();
 
-  const { data: judgeRow, error } = await supabaseAdmin
+  // Only let callers onboard themselves.
+  const session = await verifySession();
+  if (!session || session.id !== id) return true;
+
+  const { data: judgeRow } = await supabaseAdmin
     .from(USERS_TABLE)
     .select("onboarded")
     .eq("id", id)
-    .maybeSingle();
-  if (error) throw error;
+    .maybeSingle()
+    .throwOnError();
   if (!judgeRow) return true;
   const { onboarded } = judgeRow as Pick<JudgeUser | JudgeAndMentorUser, "onboarded">;
 
   if (!onboarded) {
-    const { error: updateError } = await supabaseAdmin
+    await supabaseAdmin
       .from(USERS_TABLE)
       .update({
         onboarded: true,
         updated_at: now,
       } as Partial<JudgeUser | JudgeAndMentorUser>)
-      .eq("id", id);
-    if (updateError) throw updateError;
+      .eq("id", id)
+      .throwOnError();
 
     return false;
   }

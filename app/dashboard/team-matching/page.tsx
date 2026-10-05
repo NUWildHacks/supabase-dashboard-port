@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { ADMIN, DASHBOARD_PATH, DASHBOARD_TEAM_MATCHING_PATH, LOGIN_PATH } from "@/constants";
-import { getAuthenticatedUser, getConfig } from "@/lib";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
 import type { TeamMatchingMode } from "@/types";
 
 import { TeamMatchingAdmin } from "./_components/team-matching-admin";

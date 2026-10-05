@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { ADMIN, DASHBOARD_CROWD_FAVORITE_PATH, DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT } from "@/constants";
-import { getAuthenticatedUser, getConfig } from "@/lib";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
 
 import {
   CrowdFavoriteAdminProjectList,

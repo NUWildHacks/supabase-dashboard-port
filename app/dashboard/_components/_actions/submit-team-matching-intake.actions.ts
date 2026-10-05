@@ -1,8 +1,10 @@
 "use server";
 
+import { PostgrestError } from "@supabase/supabase-js";
+
 import supabaseAdmin from "@/config/supabase-admin";
 import { TEAM_MATCHING_INTAKE_TABLE, USERS_TABLE, LOGIN_PATH, DASHBOARD_PATH, PARTICIPANT } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { getAuthenticatedUser, getConfig, requireRole } from "@/lib/server";
 import type { ActionResult } from "@/types";
 
 // Postgres error code for a unique constraint violation
@@ -36,6 +38,7 @@ const VALID_SKILLS = [
   "Docker / DevOps",
 ] as const;
 const MAX_REQUIRED_TEAMMATES = 3;
+const MAX_ADDITIONAL_NOTES_LENGTH = 1000;
 
 export type TeamMatchingIntakeData = {
   experience_level: string;
@@ -44,6 +47,7 @@ export type TeamMatchingIntakeData = {
   additional_notes: string;
   preferred_team_size: number;
   work_style: string;
+  /** Emails of required teammates. The server looks up their user IDs. */
   required_teammates: string[];
   consent: boolean;
   gender_preference?: string;
@@ -61,7 +65,12 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
 
     const { id: userId } = user;
 
-    if (!data.consent) {
+    const { end_time } = await getConfig();
+    if (Date.now() >= end_time) {
+      return { success: false, error: "Team matching is closed." };
+    }
+
+    if (data.consent !== true) {
       return { success: false, error: "You must consent to participate in team matching." };
     }
 
@@ -79,6 +88,8 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
 
     if (
       typeof data.skills !== "object" ||
+      data.skills === null ||
+      Array.isArray(data.skills) ||
       Object.keys(data.skills).some((k) => !VALID_SKILLS.includes(k as (typeof VALID_SKILLS)[number])) ||
       Object.values(data.skills).some((v) => typeof v !== "number" || v < 0 || v > 5)
     ) {
@@ -115,6 +126,10 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
       return { success: false, error: "Invalid where staying value." };
     }
 
+    if (typeof data.additional_notes !== "string" || data.additional_notes.length > MAX_ADDITIONAL_NOTES_LENGTH) {
+      return { success: false, error: `Additional notes must be ${MAX_ADDITIONAL_NOTES_LENGTH} characters or less.` };
+    }
+
     if (
       !Array.isArray(data.required_teammates) ||
       data.required_teammates.length > MAX_REQUIRED_TEAMMATES ||
@@ -123,47 +138,59 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
       return { success: false, error: "Invalid required teammates." };
     }
 
-    if (data.required_teammates.includes(userId)) {
+    const teammateEmails = data.required_teammates.map((e) => e.trim().toLowerCase());
+
+    if (teammateEmails.includes(user.email.toLowerCase())) {
       return { success: false, error: "You cannot add yourself as a required teammate." };
     }
 
-    if (new Set(data.required_teammates).size !== data.required_teammates.length) {
+    if (new Set(teammateEmails).size !== teammateEmails.length) {
       return { success: false, error: "Duplicate required teammates are not allowed." };
     }
 
     const now = Date.now();
 
-    if (data.required_teammates.length > 0) {
-      const { data: teammates, error: teammatesError } = await supabaseAdmin
+    // Look up the teammates' user IDs from their emails. Only participants can be teammates.
+    let requiredTeammateIds: string[] = [];
+    if (teammateEmails.length > 0) {
+      const { data: teammates } = await supabaseAdmin
         .from(USERS_TABLE)
-        .select("id")
-        .in("id", data.required_teammates);
-      if (teammatesError) throw teammatesError;
-      if ((teammates ?? []).length !== data.required_teammates.length) {
+        .select("id, email")
+        .in("email", teammateEmails)
+        .eq("role", PARTICIPANT)
+        .throwOnError();
+      const idByEmail = new Map((teammates ?? []).map((row) => [row.email as string, row.id as string]));
+      if (teammateEmails.some((email) => !idByEmail.has(email))) {
         return { success: false, error: "One or more required teammates could not be found." };
       }
+      requiredTeammateIds = teammateEmails.map((email) => idByEmail.get(email) as string);
     }
 
     // The user_id primary key rejects a second submission with a unique violation
-    const { error } = await supabaseAdmin.from(TEAM_MATCHING_INTAKE_TABLE).insert({
-      user_id: userId,
-      experience_level: data.experience_level,
-      preferred_roles: data.preferred_roles,
-      skills: data.skills,
-      additional_notes: data.additional_notes,
-      preferred_team_size: data.preferred_team_size,
-      work_style: data.work_style,
-      required_teammates: data.required_teammates,
-      consent: data.consent,
-      gender_preference: data.gender_preference ?? null,
-      where_staying: data.where_staying ?? null,
-      created_at: now,
-    });
-
-    if (error?.code === UNIQUE_VIOLATION) {
-      return { success: false, error: "You have already submitted the team matching survey." };
+    try {
+      await supabaseAdmin
+        .from(TEAM_MATCHING_INTAKE_TABLE)
+        .insert({
+          user_id: userId,
+          experience_level: data.experience_level,
+          preferred_roles: data.preferred_roles,
+          skills: data.skills,
+          additional_notes: data.additional_notes,
+          preferred_team_size: data.preferred_team_size,
+          work_style: data.work_style,
+          required_teammates: requiredTeammateIds,
+          consent: data.consent,
+          gender_preference: data.gender_preference ?? null,
+          where_staying: data.where_staying ?? null,
+          created_at: now,
+        })
+        .throwOnError();
+    } catch (err) {
+      if (err instanceof PostgrestError && err.code === UNIQUE_VIOLATION) {
+        return { success: false, error: "You have already submitted the team matching survey." };
+      }
+      throw err;
     }
-    if (error) throw error;
 
     return { success: true };
   } catch (error) {

@@ -1,4 +1,4 @@
-"use server";
+import "server-only";
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { JUDGING_ASSIGNMENTS_TABLE, PROJECTS_TABLE } from "@/constants";
@@ -41,8 +41,7 @@ const getJudgingAssignmentsWithProjectForRound = async (
       ? query.order(JUDGING_ASSIGNMENT_FIELDS.order, { ascending: true })
       : query.order("id", { ascending: true });
 
-  const { data: judgingAssignments, error: judgingAssignmentsError } = await query;
-  if (judgingAssignmentsError) throw judgingAssignmentsError;
+  const { data: judgingAssignments } = await query.throwOnError();
 
   if (!judgingAssignments || judgingAssignments.length === 0) return [];
 
@@ -51,12 +50,12 @@ const getJudgingAssignmentsWithProjectForRound = async (
     projectIds.add(judgingAssignment.project_id);
   });
 
-  const { data: projects, error: projectsError } = await supabaseAdmin
+  const { data: projects } = await supabaseAdmin
     .from(PROJECTS_TABLE)
     .select("id, name, track, devpost_url")
     .eq("judging_round", judgingRound)
-    .in("id", Array.from(projectIds));
-  if (projectsError) throw projectsError;
+    .in("id", Array.from(projectIds))
+    .throwOnError();
 
   const projectMap = new Map<Project["id"], Project>();
   (projects as Project[]).forEach((project) => {

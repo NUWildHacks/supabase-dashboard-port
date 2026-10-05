@@ -4,7 +4,7 @@ import { createSupabaseServerClient } from "@/config/supabase-server";
 import { LOGIN_CLOSED_ERROR, LOGIN_FAILED_ERROR, LOGIN_PATH } from "@/constants";
 import { validateRedirectPath } from "@/lib";
 
-import { checkUserCanLogin } from "../../login/_actions";
+import { checkUserCanLogin } from "../../login/_lib/check-user-can-login";
 
 /**
  * OAuth callback for Google and GitHub sign-in.

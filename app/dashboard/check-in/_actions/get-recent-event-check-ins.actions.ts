@@ -2,7 +2,8 @@
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { ADMIN, EVENT_CHECK_INS_TABLE, EVENTS_TABLE, USERS_TABLE } from "@/constants";
-import { fromRows, getAuthenticatedUser, requireRole } from "@/lib";
+import { fromRows } from "@/lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { EventCheckIn, GetEventCheckInsActionResponse, User } from "@/types";
 
 import { getCheckInRedirectPath, WILDHACKS_EVENT_ID } from "./helpers";
@@ -36,25 +37,25 @@ export const getRecentEventCheckIns = async ({
 
     // Skip event validation for WildHacks main event
     if (normalizedEventId !== WILDHACKS_EVENT_ID) {
-      const { data: event, error: eventError } = await supabaseAdmin
+      const { data: event } = await supabaseAdmin
         .from(EVENTS_TABLE)
         .select("id")
         .eq("id", normalizedEventId)
-        .maybeSingle();
-      if (eventError) throw eventError;
+        .maybeSingle()
+        .throwOnError();
       if (!event) {
         return { success: false, error: "Selected event does not exist" };
       }
     }
 
     // Uses the index on (event_id, checked_in_at desc)
-    const { data: checkInRows, error: checkInsError } = await supabaseAdmin
+    const { data: checkInRows } = await supabaseAdmin
       .from(EVENT_CHECK_INS_TABLE)
       .select()
       .eq("event_id", normalizedEventId)
       .order("checked_in_at", { ascending: false })
-      .limit(normalizeLimit(limitCount));
-    if (checkInsError) throw checkInsError;
+      .limit(normalizeLimit(limitCount))
+      .throwOnError();
 
     const rawCheckIns = fromRows<EventCheckIn>(checkInRows);
 
@@ -62,8 +63,7 @@ export const getRecentEventCheckIns = async ({
     const usersById = new Map<string, User>();
 
     if (userIds.length > 0) {
-      const { data: userRows, error: usersError } = await supabaseAdmin.from(USERS_TABLE).select().in("id", userIds);
-      if (usersError) throw usersError;
+      const { data: userRows } = await supabaseAdmin.from(USERS_TABLE).select().in("id", userIds).throwOnError();
 
       fromRows<User>(userRows).forEach((user) => usersById.set(user.id, user));
     }

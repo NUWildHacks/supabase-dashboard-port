@@ -8,7 +8,7 @@ import {
   TEAM_MATCHING_RUNS_TABLE,
   TEAM_MATCHING_RUNS_TABLE_PROD,
 } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { ActionResult, TeamMatchingMode } from "@/types";
 
 export const renameRun = async (runId: string, name: string, mode: TeamMatchingMode = "dev"): Promise<ActionResult> => {
@@ -22,8 +22,12 @@ export const renameRun = async (runId: string, name: string, mode: TeamMatchingM
     if (!trimmed) return { success: false, error: "Name cannot be empty." };
 
     const table = mode === "prod" ? TEAM_MATCHING_RUNS_TABLE_PROD : TEAM_MATCHING_RUNS_TABLE;
-    const { data, error } = await supabaseAdmin.from(table).update({ name: trimmed }).eq("id", runId).select("id");
-    if (error) throw error;
+    const { data } = await supabaseAdmin
+      .from(table)
+      .update({ name: trimmed })
+      .eq("id", runId)
+      .select("id")
+      .throwOnError();
     if (!data || data.length === 0) return { success: false, error: "Run not found." };
 
     return { success: true };

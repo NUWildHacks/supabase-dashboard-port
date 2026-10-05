@@ -10,7 +10,7 @@ import {
   LOGIN_PATH,
   PARTICIPANT,
 } from "@/constants";
-import { getAuthenticatedUser, requireRole, getConfig } from "@/lib";
+import { getAuthenticatedUser, requireRole, getConfig } from "@/lib/server";
 import type { ActionResult } from "@/types";
 
 import { getCrowdFavoriteProject, getCrowdFavoriteProjectForUser } from "../_lib";
@@ -51,8 +51,7 @@ const optOutOfCrowdFavorite = async (): Promise<CrowdFavoriteOptOutResult> => {
 
     // We remove the project row as a whole on opt-out so the team is no longer votable.
     // The foreign key on crowd_favorite_votes cascades, so votes for this project are deleted too.
-    const { error: deleteError } = await supabaseAdmin.from(CROWD_FAVORITES_TABLE).delete().eq("id", project.id);
-    if (deleteError) throw deleteError;
+    await supabaseAdmin.from(CROWD_FAVORITES_TABLE).delete().eq("id", project.id).throwOnError();
 
     revalidatePath(DASHBOARD_CROWD_FAVORITE_PATH);
     revalidatePath(DASHBOARD_PATH);

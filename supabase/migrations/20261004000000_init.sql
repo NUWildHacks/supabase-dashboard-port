@@ -1,4 +1,4 @@
--- WildHacks dashboard schema (migrated from Firestore).
+-- WildHacks dashboard schema.
 --
 -- Conventions:
 --   * Timestamps are bigint milliseconds since epoch, matching the app's `number` timestamps.
@@ -133,7 +133,7 @@ create table public.event_check_ins (
 create index event_check_ins_event_checked_in_at_idx on public.event_check_ins (event_id, checked_in_at desc);
 
 -- ---------------------------------------------------------------------------
--- Judging (Firestore `round_1` / `round_2` subcollections become a `judging_round` column)
+-- Judging (each judging round is a `judging_round` value)
 -- ---------------------------------------------------------------------------
 create table public.projects (
   judging_round text not null check (judging_round in ('Round 1', 'Round 2')),
@@ -193,7 +193,7 @@ create table public.crowd_favorites (
 
 create index crowd_favorites_team_member_ids_idx on public.crowd_favorites using gin (team_member_ids);
 
--- One vote per user: the primary key on user_id replaces the Firestore collection-group lookup.
+-- One vote per user: the primary key on user_id.
 create table public.crowd_favorite_votes (
   user_id text primary key references public.users (id) on delete cascade on update cascade,
   crowd_favorite_id text not null references public.crowd_favorites (id) on delete cascade,
@@ -276,7 +276,7 @@ alter table public.team_matching_formations_prod
   add foreign key (run_id) references public.team_matching_runs_prod (id) on delete cascade;
 
 -- ---------------------------------------------------------------------------
--- Row level security (ported from firestore.rules)
+-- Row level security
 -- ---------------------------------------------------------------------------
 alter table public.users enable row level security;
 alter table public.wildhacks_config enable row level security;

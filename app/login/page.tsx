@@ -5,7 +5,7 @@ import { Suspense } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { DASHBOARD_PATH, ROOT_PATH } from "@/constants";
-import { verifySession } from "@/lib";
+import { verifySession } from "@/lib/server";
 
 import { GithubLoginButton, GoogleLoginButton, LoginErrorToast } from "./_components";
 

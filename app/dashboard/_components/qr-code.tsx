@@ -9,13 +9,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { User } from "@/types";
-
 type QRCodeProps = {
-  userId: User["id"];
+  /** The signed check-in code from `createCheckInCode`. */
+  code: string;
 };
 
-const QRCode = ({ userId }: QRCodeProps) => {
+const QRCode = ({ code }: QRCodeProps) => {
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -36,12 +35,7 @@ const QRCode = ({ userId }: QRCodeProps) => {
           </DialogDescription>
         </DialogHeader>
         <div className="flex justify-center items-center rounded-md bg-white p-2">
-          <QRCodeComponent
-            className="size-[192px] sm:size-[256px]"
-            value={userId}
-            bgColor="#FFFFFF"
-            fgColor="#000000"
-          />
+          <QRCodeComponent className="size-[192px] sm:size-[256px]" value={code} bgColor="#FFFFFF" fgColor="#000000" />
         </div>
       </DialogContent>
     </Dialog>

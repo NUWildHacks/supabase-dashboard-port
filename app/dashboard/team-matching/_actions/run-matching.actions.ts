@@ -5,19 +5,14 @@ import {
   ADMIN,
   DASHBOARD_PATH,
   LOGIN_PATH,
-  TEAM_MATCHING_FORMATIONS_TABLE,
-  TEAM_MATCHING_FORMATIONS_TABLE_PROD,
   TEAM_MATCHING_INTAKE_TABLE,
   TEAM_MATCHING_INTAKE_TABLE_DEV,
-  TEAM_MATCHING_RUNS_TABLE,
-  TEAM_MATCHING_RUNS_TABLE_PROD,
   TEAM_MATCHING_SETTINGS_TABLE,
-  TEAM_MATCHING_TEAMS_TABLE,
-  TEAM_MATCHING_TEAMS_TABLE_PROD,
   USERS_TABLE,
   WILDHACKS_CONFIG_TABLE,
 } from "@/constants";
-import { fromRow, getAuthenticatedUser, requireRole } from "@/lib";
+import { fromRow, selectAllRows } from "@/lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type {
   ActionResult,
   IntakeRecord,
@@ -49,17 +44,22 @@ export const runMatching = async (name?: string): Promise<RunMatchingResult> => 
 
     // Fetch config and settings in parallel
     const [configResult, settingsResult] = await Promise.all([
-      supabaseAdmin.from(WILDHACKS_CONFIG_TABLE).select("team_matching_mode").eq("id", "config").maybeSingle(),
-      supabaseAdmin.from(TEAM_MATCHING_SETTINGS_TABLE).select().eq("id", "team_matching_settings").maybeSingle(),
+      supabaseAdmin
+        .from(WILDHACKS_CONFIG_TABLE)
+        .select("team_matching_mode")
+        .eq("id", "config")
+        .maybeSingle()
+        .throwOnError(),
+      supabaseAdmin
+        .from(TEAM_MATCHING_SETTINGS_TABLE)
+        .select()
+        .eq("id", "team_matching_settings")
+        .maybeSingle()
+        .throwOnError(),
     ]);
-    if (configResult.error) throw configResult.error;
-    if (settingsResult.error) throw settingsResult.error;
 
     const mode: TeamMatchingMode = (configResult.data?.team_matching_mode as TeamMatchingMode | undefined) ?? "dev";
     const intakeTable = mode === "prod" ? TEAM_MATCHING_INTAKE_TABLE : TEAM_MATCHING_INTAKE_TABLE_DEV;
-    const runsTable = mode === "prod" ? TEAM_MATCHING_RUNS_TABLE_PROD : TEAM_MATCHING_RUNS_TABLE;
-    const teamsTable = mode === "prod" ? TEAM_MATCHING_TEAMS_TABLE_PROD : TEAM_MATCHING_TEAMS_TABLE;
-    const formationsTable = mode === "prod" ? TEAM_MATCHING_FORMATIONS_TABLE_PROD : TEAM_MATCHING_FORMATIONS_TABLE;
 
     let settings: TeamMatchingSettings = DEFAULT_TEAM_MATCHING_SETTINGS;
     if (settingsResult.data) {
@@ -69,18 +69,19 @@ export const runMatching = async (name?: string): Promise<RunMatchingResult> => 
     }
 
     // Fetch all intake rows from the active table
-    const { data: intakeRows, error: intakeError } = await supabaseAdmin.from(intakeTable).select();
-    if (intakeError) throw intakeError;
+    const intakeRows = await selectAllRows((from, to) =>
+      supabaseAdmin.from(intakeTable).select().order("user_id").range(from, to).throwOnError()
+    );
 
     // Fetch user display names
     const userIds = (intakeRows ?? []).map((row) => row.user_id as string);
     const userRows: { id: string; first_name: string | null; last_name: string | null; gender: string | null }[] = [];
     for (let i = 0; i < userIds.length; i += USER_LOOKUP_CHUNK_SIZE) {
-      const { data, error } = await supabaseAdmin
+      const { data } = await supabaseAdmin
         .from(USERS_TABLE)
         .select("id, first_name, last_name, gender")
-        .in("id", userIds.slice(i, i + USER_LOOKUP_CHUNK_SIZE));
-      if (error) throw error;
+        .in("id", userIds.slice(i, i + USER_LOOKUP_CHUNK_SIZE))
+        .throwOnError();
       userRows.push(...(data ?? []));
     }
     const userMap = new Map(userRows.map((row) => [row.id, row]));
@@ -92,24 +93,27 @@ export const runMatching = async (name?: string): Promise<RunMatchingResult> => 
     );
     const genderMap = new Map(userIds.map((id) => [id, userMap.get(id)?.gender ?? undefined]));
 
-    // Build IntakeRecord array
-    const intakes: IntakeRecord[] = (intakeRows ?? []).map((d) => {
-      const userId = d.user_id as string;
-      return {
-        user_id: userId,
-        name: nameMap.get(userId) ?? "Unknown",
-        experience_level: d.experience_level ?? "beginner",
-        preferred_roles: d.preferred_roles ?? [],
-        skills: d.skills ?? {},
-        work_style: d.work_style ?? "in_between",
-        preferred_team_size: d.preferred_team_size ?? 4,
-        required_teammates: d.required_teammates ?? [],
-        additional_notes: d.additional_notes ?? "",
-        gender: genderMap.get(userId),
-        gender_preference: d.gender_preference ?? "no_preference",
-        where_staying: d.where_staying ?? "unsure",
-      };
-    });
+    // Build IntakeRecord array. Intake rows are kept when a user is deleted, so skip rows whose
+    // user no longer exists.
+    const intakes: IntakeRecord[] = (intakeRows ?? [])
+      .filter((d) => userMap.has(d.user_id as string))
+      .map((d) => {
+        const userId = d.user_id as string;
+        return {
+          user_id: userId,
+          name: nameMap.get(userId) ?? "Unknown",
+          experience_level: d.experience_level ?? "beginner",
+          preferred_roles: d.preferred_roles ?? [],
+          skills: d.skills ?? {},
+          work_style: d.work_style ?? "in_between",
+          preferred_team_size: d.preferred_team_size ?? 4,
+          required_teammates: d.required_teammates ?? [],
+          additional_notes: d.additional_notes ?? "",
+          gender: genderMap.get(userId),
+          gender_preference: d.gender_preference ?? "no_preference",
+          where_staying: d.where_staying ?? "unsure",
+        };
+      });
 
     // Use a timestamp-based seed so each run explores a different random ordering.
     const baseSeed = Date.now() & 0xffffffff;
@@ -164,33 +168,26 @@ export const runMatching = async (name?: string): Promise<RunMatchingResult> => 
       };
     });
 
-    // Insert the run first so the team and formation rows can reference it
-    const { error: runError } = await supabaseAdmin.from(runsTable).insert({
-      id: runId,
-      run_at: now,
-      run_by: user.id,
-      name: name?.trim() || null,
-      is_top: false,
-      fingerprint: result.fingerprint,
-      status: "draft",
-      settings_snapshot: settings,
-      warnings: result.warnings,
-      stats,
-    });
-    if (runError) throw runError;
-
-    const { error: teamsError } =
-      teamRows.length > 0 ? await supabaseAdmin.from(teamsTable).insert(teamRows) : { error: null };
-    const { error: formationsError } =
-      !teamsError && formationRows.length > 0
-        ? await supabaseAdmin.from(formationsTable).insert(formationRows)
-        : { error: null };
-
-    if (teamsError || formationsError) {
-      // Remove the partial run (deleting the run row cascades to its teams and formations)
-      await supabaseAdmin.from(runsTable).delete().eq("id", runId);
-      throw teamsError ?? formationsError;
-    }
+    // Save the run, its teams, and its alternative formations in one transaction.
+    await supabaseAdmin
+      .rpc("insert_matching_run", {
+        p_mode: mode,
+        p_run: {
+          id: runId,
+          run_at: now,
+          run_by: user.id,
+          name: name?.trim() || null,
+          is_top: false,
+          fingerprint: result.fingerprint,
+          status: "draft",
+          settings_snapshot: settings,
+          warnings: result.warnings,
+          stats,
+        },
+        p_teams: teamRows,
+        p_formations: formationRows,
+      })
+      .throwOnError();
 
     const run: TeamMatchingRun = {
       id: runId,

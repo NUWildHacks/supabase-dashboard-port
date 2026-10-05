@@ -59,6 +59,7 @@ export {
   ONE_HOUR,
   ONE_MINUTE,
   ONE_SECOND,
+  TEN_MINUTES,
   FIFTEEN_MINUTES,
 } from "./time.constants";
 

@@ -1,37 +1,12 @@
-"use server";
-
-import type { PostgrestError } from "@supabase/supabase-js";
+import "server-only";
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { JUDGING_ASSIGNMENTS_TABLE, PROJECTS_TABLE, USERS_TABLE } from "@/constants";
-import { fromRows } from "@/lib";
+import { fromRows, selectAllRows } from "@/lib";
 import type { User } from "@/types";
 
 import { ROUND_1, ROUND_2 } from "../../judging/constants";
 import { JudgingAssignment, JudgingRound, Project } from "../../judging/types";
-
-/** Supabase returns at most this many rows per request (`max_rows` in supabase/config.toml). */
-const PAGE_SIZE = 1000;
-
-/**
- * Read every row of a query, one page at a time, so the result is not cut off at `max_rows`.
- * The query must have a stable order (for example, by primary key) for the pages to be correct.
- */
-const selectAllRows = async <T>(
-  queryPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: PostgrestError | null }>
-): Promise<T[]> => {
-  const rows: T[] = [];
-
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await queryPage(from, from + PAGE_SIZE - 1);
-    if (error) throw error;
-
-    rows.push(...(data ?? []));
-    if (!data || data.length < PAGE_SIZE) break;
-  }
-
-  return rows;
-};
 
 /**
  * Get all users from the database.
@@ -50,7 +25,7 @@ const selectAllRows = async <T>(
  */
 const getUsers = async (): Promise<User[]> => {
   const userRows = await selectAllRows((from, to) =>
-    supabaseAdmin.from(USERS_TABLE).select().order("id").range(from, to)
+    supabaseAdmin.from(USERS_TABLE).select().order("id").range(from, to).throwOnError()
   );
 
   // ensure that incomplete rows (e.g. new participants)
@@ -68,7 +43,7 @@ const getUsers = async (): Promise<User[]> => {
 const getJudgingAssignmentsMap = async (): Promise<Map<JudgingRound, JudgingAssignment[]>> => {
   // Rows keep `null` for room_id and judging_form, matching the JudgingAssignment type.
   const judgingAssignmentRows = (await selectAllRows((from, to) =>
-    supabaseAdmin.from(JUDGING_ASSIGNMENTS_TABLE).select().order("id").range(from, to)
+    supabaseAdmin.from(JUDGING_ASSIGNMENTS_TABLE).select().order("id").range(from, to).throwOnError()
   )) as JudgingAssignment[];
 
   const judgingAssignments = new Map<JudgingRound, JudgingAssignment[]>();
@@ -106,6 +81,7 @@ const getProjectsMap = async (): Promise<Map<JudgingRound, Project[]>> => {
       .order("judging_round")
       .order("id")
       .range(from, to)
+      .throwOnError()
   );
 
   const toProjects = (round: JudgingRound): Project[] =>

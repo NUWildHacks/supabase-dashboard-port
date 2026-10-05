@@ -3,6 +3,7 @@ node_modules
 .next
 build
 dist
+.claude
 
 # Don't format these files
 pnpm-lock.yaml

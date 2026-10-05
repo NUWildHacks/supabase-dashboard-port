@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { LOGIN_PATH } from "@/constants";
-import { getConfig, verifySession } from "@/lib";
+import { getConfig, verifySession } from "@/lib/server";
 
 import RegistrationForm from "./_components/registration-form";
 import { registerJudgeMentorWithEmail } from "./lib";

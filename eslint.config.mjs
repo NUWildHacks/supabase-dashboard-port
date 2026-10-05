@@ -68,6 +68,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "components/ui",
+    // Local Claude Code worktrees and settings
+    ".claude/**",
   ]),
 ]);
 

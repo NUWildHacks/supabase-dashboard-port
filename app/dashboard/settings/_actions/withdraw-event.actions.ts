@@ -2,8 +2,10 @@
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { USERS_TABLE, DASHBOARD_SETTINGS_PATH, LOGIN_PATH } from "@/constants";
-import { getAuthenticatedUser, getConfig } from "@/lib";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
 import type { ActionResult } from "@/types";
+
+import { getResumeStoragePaths, removeResumeFiles } from "../../_lib/resume";
 
 export type WithdrawEventResult = ActionResult;
 
@@ -24,8 +26,10 @@ export const withdrawEvent = async (): Promise<WithdrawEventResult> => {
     const user = await getAuthenticatedUser(redirectPath);
     const { id: userId } = user;
 
-    const { error: deleteUserRowError } = await supabaseAdmin.from(USERS_TABLE).delete().eq("id", userId);
-    if (deleteUserRowError) throw deleteUserRowError;
+    const resumePaths = await getResumeStoragePaths([userId]);
+
+    await supabaseAdmin.from(USERS_TABLE).delete().eq("id", userId).throwOnError();
+    await removeResumeFiles(resumePaths);
 
     const { error: deleteAuthUserError } = await supabaseAdmin.auth.admin.deleteUser(userId);
     if (deleteAuthUserError) throw deleteAuthUserError;

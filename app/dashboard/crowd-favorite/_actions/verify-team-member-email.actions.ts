@@ -1,10 +1,14 @@
 "use server";
 
 import supabaseAdmin from "@/config/supabase-admin";
-import { DASHBOARD_CROWD_FAVORITE_PATH, LOGIN_PATH, PARTICIPANT, USERS_TABLE } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { DASHBOARD_CROWD_FAVORITE_PATH, LOGIN_PATH, PARTICIPANT, TEN_MINUTES, USERS_TABLE } from "@/constants";
+import { isWithinRateLimit, RATE_LIMIT_TOO_MANY_ATTEMPTS } from "@/lib/rate-limit.lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 
 import { getCrowdFavoriteProjectForUser } from "../_lib";
+
+// Each lookup is one call, so a participant can check about 30 emails every 10 minutes.
+const LOOKUP_LIMIT = 30;
 
 type VerifyTeamMemberEmailResult =
   | { success: true; first_name: string; email: string }
@@ -18,7 +22,11 @@ const verifyTeamMemberEmail = async (email: string): Promise<VerifyTeamMemberEma
     const roleCheck = requireRole(caller, PARTICIPANT);
     if (roleCheck) return roleCheck as { success: false; error: string };
 
-    const normalizedEmail = email.trim().toLowerCase();
+    if (!(await isWithinRateLimit(`email-lookup:${caller.id}`, LOOKUP_LIMIT, TEN_MINUTES))) {
+      return { success: false, error: RATE_LIMIT_TOO_MANY_ATTEMPTS };
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
     if (!normalizedEmail) {
       return { success: false, error: "Email is required" };
     }
@@ -27,20 +35,17 @@ const verifyTeamMemberEmail = async (email: string): Promise<VerifyTeamMemberEma
       return { success: false, error: "Do not add your own email as a teammate" };
     }
 
-    const { data: member, error } = await supabaseAdmin
+    const { data: member } = await supabaseAdmin
       .from(USERS_TABLE)
-      .select("id, role, first_name")
+      .select("id, first_name")
       .eq("email", normalizedEmail)
+      .eq("role", PARTICIPANT)
       .limit(1)
-      .maybeSingle();
-    if (error) throw error;
+      .maybeSingle()
+      .throwOnError();
 
     if (!member) {
       return { success: false, error: "No participant found for this email" };
-    }
-
-    if (member.role !== PARTICIPANT) {
-      return { success: false, error: "Only participants can be added to crowd favorite teams" };
     }
 
     if (await getCrowdFavoriteProjectForUser(member.id)) {

@@ -1,5 +1,4 @@
-"use server";
-
+import "server-only";
 import { cache } from "react";
 
 import supabaseAdmin from "@/config/supabase-admin";
@@ -22,20 +21,20 @@ import { ROUND_1 } from "../app/dashboard/judging/constants";
  */
 export const calculateStatistics = cache(async (): Promise<WildHacksStatistics> => {
   const countUsers = async (role: string) => {
-    const { count, error } = await supabaseAdmin
+    const { count } = await supabaseAdmin
       .from(USERS_TABLE)
       .select("id", { count: "exact", head: true })
-      .eq("role", role);
-    if (error) throw error;
+      .eq("role", role)
+      .throwOnError();
     return count ?? 0;
   };
 
   const countProjects = async () => {
-    const { count, error } = await supabaseAdmin
+    const { count } = await supabaseAdmin
       .from(PROJECTS_TABLE)
       .select("id", { count: "exact", head: true })
-      .eq("judging_round", ROUND_1);
-    if (error) throw error;
+      .eq("judging_round", ROUND_1)
+      .throwOnError();
     return count ?? 0;
   };
 

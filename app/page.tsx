@@ -1,9 +1,7 @@
-"use server";
-
 import Image from "next/image";
 
 import { Completed, Footer, Navbar, Closed } from "@/app/_components";
-import { getConfig } from "@/lib";
+import { getConfig } from "@/lib/server";
 
 const RootPage = async () => {
   const { end_time } = await getConfig();

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { ADMIN, DASHBOARD_PATH, DASHBOARD_MANAGE_USERS_PATH, LOGIN_PATH, JUDGE, JUDGE_AND_MENTOR } from "@/constants";
-import { getAuthenticatedUser } from "@/lib";
+import { getAuthenticatedUser } from "@/lib/server";
 
 import { JudgingAssignmentsTable, UsersTable } from "./_components";
 import { getJudgingAssignmentsMap, getProjectsMap, getUsers } from "./_lib";

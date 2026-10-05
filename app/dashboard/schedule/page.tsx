@@ -1,5 +1,5 @@
 import { DASHBOARD_SCHEDULE_PATH, LOGIN_PATH } from "@/constants";
-import { getAuthenticatedUser, getConfig } from "@/lib";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
 
 import { ScheduleDisplay } from "./_components";
 

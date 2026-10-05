@@ -3,15 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import supabaseAdmin from "@/config/supabase-admin";
-import {
-  CROWD_FAVORITES_TABLE,
-  DASHBOARD_CROWD_FAVORITE_PATH,
-  DASHBOARD_PATH,
-  LOGIN_PATH,
-  PARTICIPANT,
-  USERS_TABLE,
-} from "@/constants";
-import { getAuthenticatedUser, requireRole, getConfig } from "@/lib";
+import { DASHBOARD_CROWD_FAVORITE_PATH, DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT, USERS_TABLE } from "@/constants";
+import { getAuthenticatedUser, requireRole, getConfig } from "@/lib/server";
 import type { ActionResult, CrowdFavoriteProject } from "@/types";
 
 import { getCrowdFavoriteProjectForUser } from "../_lib";
@@ -68,14 +61,19 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
 
     const candidateResults = await Promise.all(
       normalizedEmails.map((email) =>
-        supabaseAdmin.from(USERS_TABLE).select("id, role, first_name").eq("email", email).limit(1).maybeSingle()
+        supabaseAdmin
+          .from(USERS_TABLE)
+          .select("id, role, first_name")
+          .eq("email", email)
+          .limit(1)
+          .maybeSingle()
+          .throwOnError()
       )
     );
 
     const candidateMembers: CandidateMember[] = [];
     for (let index = 0; index < candidateResults.length; index += 1) {
-      const { data: user, error: userError } = candidateResults[index];
-      if (userError) throw userError;
+      const { data: user } = candidateResults[index];
       const email = normalizedEmails[index];
 
       if (!user) {
@@ -118,12 +116,12 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
     }
 
     // Re-check the caller and teammates right before the write.
-    const { data: callerRow, error: callerError } = await supabaseAdmin
+    const { data: callerRow } = await supabaseAdmin
       .from(USERS_TABLE)
       .select("role")
       .eq("id", caller.id)
-      .maybeSingle();
-    if (callerError) throw callerError;
+      .maybeSingle()
+      .throwOnError();
     if (!callerRow) {
       throw new Error("Authenticated user no longer exists");
     }
@@ -132,14 +130,14 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       throw new Error("Only participants can opt in to crowd favorite");
     }
 
-    const { data: teammateRows, error: teammatesError } = await supabaseAdmin
+    const { data: teammateRows } = await supabaseAdmin
       .from(USERS_TABLE)
       .select("id, role")
       .in(
         "id",
         candidateMembers.map((member) => member.id)
-      );
-    if (teammatesError) throw teammatesError;
+      )
+      .throwOnError();
 
     candidateMembers.forEach((member) => {
       const teammate = teammateRows.find((row) => row.id === member.id);
@@ -166,15 +164,23 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       })),
     ];
 
-    const { error: insertError } = await supabaseAdmin.from(CROWD_FAVORITES_TABLE).insert({
-      project_name: data.project_name,
-      devpost_url: data.devpost_url,
-      team_members: teamMembers,
-      team_member_ids: teamMembers.map((m) => m.id),
-      created_at: now,
-      updated_at: now,
-    } as Omit<CrowdFavoriteProject, "id">);
-    if (insertError) throw insertError;
+    // The database function checks again, under a lock, that no member is on another project,
+    // so two opt-ins at the same time cannot place one person on two projects.
+    const { data: projectId } = await supabaseAdmin
+      .rpc("create_crowd_favorite", {
+        p_project_name: data.project_name,
+        p_devpost_url: data.devpost_url,
+        p_team_members: teamMembers,
+        p_now: now,
+      })
+      .throwOnError();
+    if (!projectId) {
+      return {
+        success: false,
+        error: "You or a teammate joined another crowd favorite project. Refresh the page and try again.",
+        field: "team_members",
+      };
+    }
 
     revalidatePath(DASHBOARD_CROWD_FAVORITE_PATH);
     revalidatePath(DASHBOARD_PATH);

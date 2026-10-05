@@ -35,7 +35,10 @@ import {
   TEAM_MATCHING_TEAMS_TABLE,
   TEAM_MATCHING_TEAMS_TABLE_PROD,
 } from "@/constants";
-import { calculateStatistics, cn, fromRows, getAuthenticatedUser, getConfig } from "@/lib";
+import { cn, fromRows, selectAllRows } from "@/lib";
+import { createCheckInCode } from "@/lib/check-in-code.lib";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
+import { calculateStatistics } from "@/lib/statistics.lib";
 import type { MatchedTeam, TeamFormation, TeamMatchingRun, TeamSuggestion } from "@/types";
 
 import { TeamMatchingGate } from "./_components/team-matching-gate";
@@ -49,12 +52,12 @@ async function fetchTopSuggestions(
     formations: string;
   }
 ): Promise<TeamSuggestion[]> {
-  const { data: topRunRows, error: topRunsError } = await supabaseAdmin
+  const { data: topRunRows } = await supabaseAdmin
     .from(collections.runs)
     .select()
     .eq("is_top", true)
-    .order("run_at", { ascending: false });
-  if (topRunsError) throw topRunsError;
+    .order("run_at", { ascending: false })
+    .throwOnError();
   const topRuns = fromRows<TeamMatchingRun>(topRunRows);
 
   const results: TeamSuggestion[] = [];
@@ -81,24 +84,22 @@ async function fetchTopSuggestions(
   for (const run of topRuns) {
     if (results.length >= 3) break;
 
-    const { data: teamRows, error: teamsError } = await supabaseAdmin
-      .from(collections.teams)
-      .select()
-      .eq("run_id", run.id);
-    if (teamsError) throw teamsError;
+    const teamRows = await selectAllRows((from, to) =>
+      supabaseAdmin.from(collections.teams).select().eq("run_id", run.id).order("id").range(from, to).throwOnError()
+    );
     const primary = fromRows<MatchedTeam>(teamRows).find((t) => t.members.some((m) => m.user_id === userId));
     if (primary) tryAdd(primary);
 
     if (results.length >= 3) break;
 
-    const { data: formationRows, error: formationsError } = await supabaseAdmin
+    const { data: formationRows } = await supabaseAdmin
       .from(collections.formations)
       .select("run_id, formation_index, teams, fingerprint")
       .in(
         "id",
         [1, 2].map((i) => `${run.id}_alt${i}`)
-      );
-    if (formationsError) throw formationsError;
+      )
+      .throwOnError();
     const formations = fromRows<TeamFormation>(formationRows).sort((a, b) => a.formation_index - b.formation_index);
     for (const formation of formations) {
       if (results.length >= 3) continue;
@@ -139,12 +140,12 @@ const DashboardPage = async () => {
   let hasSubmittedTeamMatching = false;
   if (role === PARTICIPANT || role === ADMIN) {
     const intakeTable = role === PARTICIPANT ? TEAM_MATCHING_INTAKE_TABLE : TEAM_MATCHING_INTAKE_TABLE_DEV;
-    const { data: intake, error: intakeError } = await supabaseAdmin
+    const { data: intake } = await supabaseAdmin
       .from(intakeTable)
       .select("user_id")
       .eq("user_id", userId)
-      .maybeSingle();
-    if (intakeError) throw intakeError;
+      .maybeSingle()
+      .throwOnError();
     hasSubmittedTeamMatching = intake !== null;
   }
 
@@ -168,8 +169,12 @@ const DashboardPage = async () => {
             formations: TEAM_MATCHING_FORMATIONS_TABLE,
           };
 
+  // Participants get suggestions only after admins release the results; the page data would
+  // otherwise carry them to the browser early.
   const initialSuggestions =
-    role === ADMIN || role === PARTICIPANT ? await fetchTopSuggestions(userId, suggestionCollections) : [];
+    role === ADMIN || (role === PARTICIPANT && wildhacksConfig.results_released === true)
+      ? await fetchTopSuggestions(userId, suggestionCollections)
+      : [];
 
   const now = new Date().getTime();
   const end = wildhacksConfig.end_time;
@@ -182,7 +187,7 @@ const DashboardPage = async () => {
         </div>
         {role === PARTICIPANT && (
           <div className="md:col-span-1">
-            <QRCode userId={userId} />
+            <QRCode code={createCheckInCode(userId)} />
           </div>
         )}
         <div className={cn(role === PARTICIPANT || showAdminCrowdFavoriteLink ? "md:col-span-1" : "md:col-span-2")}>

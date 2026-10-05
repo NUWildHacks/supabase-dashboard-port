@@ -57,7 +57,7 @@ export const TeamMatchingGate = ({
     };
 
     const channel = supabase
-      .channel(`team-matching-gate-${releasedField}`)
+      .channel(`team-matching-gate-${releasedField}-${crypto.randomUUID()}`)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: WILDHACKS_CONFIG_TABLE, filter: "id=eq.config" },

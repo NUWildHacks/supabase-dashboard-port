@@ -2,7 +2,7 @@
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { DASHBOARD_PATH, LOGIN_PATH, PARTICIPANT, RESUMES_BUCKET, RESUMES_TABLE } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import { ActionResult } from "@/types";
 
 import { ResumeMetadata } from "../types";
@@ -24,12 +24,12 @@ export const getResumeDownloadUrl = async (): Promise<GetResumeDownloadUrlResult
     const roleError = requireRole(user, PARTICIPANT, "You are not authorized to download a resume");
     if (roleError) return roleError;
 
-    const { data: resumeRow, error: resumeError } = await supabaseAdmin
+    const { data: resumeRow } = await supabaseAdmin
       .from(RESUMES_TABLE)
       .select()
       .eq("id", user.id)
-      .maybeSingle();
-    if (resumeError) throw resumeError;
+      .maybeSingle()
+      .throwOnError();
 
     if (!resumeRow) {
       return { success: false, error: "Resume not found" };

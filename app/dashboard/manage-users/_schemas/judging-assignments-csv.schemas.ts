@@ -21,7 +21,10 @@ const judgingAssignmentsCsvSchema = z.object({
     .min(1, "Project name is required")
     .max(100, "Project name must be 100 characters or less"),
   devpost_url: secureUrlSchema,
-  order: z.preprocess((val) => (typeof val === "string" ? val.trim() : val), z.coerce.number().pipe(z.number())),
+  order: z.preprocess(
+    (val) => (typeof val === "string" ? val.trim() : val),
+    z.coerce.number().pipe(z.number().int("Order must be a whole number"))
+  ),
   judging_round: z.enum(ROUNDS, { message: "Invalid judging round" }),
   room_id: z.union([z.literal(""), z.enum(ROOMS, { message: "Invalid room" })]),
 });

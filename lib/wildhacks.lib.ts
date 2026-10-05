@@ -1,8 +1,8 @@
-"use server";
+import "server-only";
 
 import supabaseAdmin from "@/config/supabase-admin";
-import { WILDHACKS_CONFIG_TABLE, WILDHACKS_SECRETS_TABLE } from "@/constants";
-import type { WildHacksConfig, WildHacksSecrets } from "@/types";
+import { WILDHACKS_CONFIG_TABLE } from "@/constants";
+import type { WildHacksConfig } from "@/types";
 
 import { fromRow } from "./db.lib";
 
@@ -19,9 +19,13 @@ import { fromRow } from "./db.lib";
  * ```
  */
 const getConfig = async (): Promise<WildHacksConfig> => {
-  const { data, error } = await supabaseAdmin.from(WILDHACKS_CONFIG_TABLE).select().eq("id", "config").maybeSingle();
+  const { data } = await supabaseAdmin
+    .from(WILDHACKS_CONFIG_TABLE)
+    .select()
+    .eq("id", "config")
+    .maybeSingle()
+    .throwOnError();
 
-  if (error) throw error;
   if (!data) {
     throw new Error("WildHacks configuration not found");
   }
@@ -31,24 +35,4 @@ const getConfig = async (): Promise<WildHacksConfig> => {
   return config;
 };
 
-/**
- * Get the WildHacks secrets (admin-only values such as the crowd favorite password).
- * Throws an error if the secrets row does not exist.
- *
- * @returns Promise resolving to the WildHacks secrets
- * @throws {Error} If the secrets row is not found
- */
-const getSecrets = async (): Promise<WildHacksSecrets> => {
-  const { data, error } = await supabaseAdmin.from(WILDHACKS_SECRETS_TABLE).select().eq("id", "secrets").maybeSingle();
-
-  if (error) throw error;
-  if (!data) {
-    throw new Error("WildHacks secrets not found");
-  }
-
-  const secrets = fromRow<WildHacksSecrets & { id?: string }>(data);
-  delete secrets.id;
-  return secrets;
-};
-
-export { getConfig, getSecrets };
+export { getConfig };

@@ -1,5 +1,6 @@
 import { ADMIN, DASHBOARD_SETTINGS_PATH, JUDGE, LOGIN_PATH, JUDGE_AND_MENTOR, PARTICIPANT } from "@/constants";
-import { getAuthenticatedUser, getConfig, getSecrets } from "@/lib";
+import { getSecrets } from "@/lib/secrets.lib";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
 import type {
   AdminUser,
   JudgeUser,

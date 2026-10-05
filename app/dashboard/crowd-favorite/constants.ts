@@ -1,4 +1,3 @@
-import { getConfig } from "@/lib";
 import type { WildHacksConfig } from "@/types";
 
 export const CROWD_FAVORITE_MAX_TEAM_MEMBERS = 4;
@@ -26,38 +25,35 @@ function normalizeCrowdFavoriteState(config: Partial<WildHacksConfig>): CrowdFav
   };
 }
 
-async function getCrowdFavoriteStateConfig(): Promise<CrowdFavoriteState> {
-  const config = await getConfig();
-  return normalizeCrowdFavoriteState(config);
-}
-
-export const isCrowdFavoriteOptInOpen = async (config?: Partial<WildHacksConfig>): Promise<boolean> => {
-  const stateConfig = config ? normalizeCrowdFavoriteState(config) : await getCrowdFavoriteStateConfig();
+// Client components import the constants above, so these helpers take the config as an argument
+// instead of reading it from the database.
+export const isCrowdFavoriteOptInOpen = async (config: Partial<WildHacksConfig>): Promise<boolean> => {
+  const stateConfig = normalizeCrowdFavoriteState(config);
   return stateConfig.crowd_favorite_opt_in_open;
 };
 
-export const hasCrowdFavoriteOptInStarted = async (config?: Partial<WildHacksConfig>): Promise<boolean> => {
-  const stateConfig = config ? normalizeCrowdFavoriteState(config) : await getCrowdFavoriteStateConfig();
+export const hasCrowdFavoriteOptInStarted = async (config: Partial<WildHacksConfig>): Promise<boolean> => {
+  const stateConfig = normalizeCrowdFavoriteState(config);
   return stateConfig.crowd_favorite_opt_in_started;
 };
 
-export const isCrowdFavoriteVotingOpen = async (config?: Partial<WildHacksConfig>): Promise<boolean> => {
-  const stateConfig = config ? normalizeCrowdFavoriteState(config) : await getCrowdFavoriteStateConfig();
+export const isCrowdFavoriteVotingOpen = async (config: Partial<WildHacksConfig>): Promise<boolean> => {
+  const stateConfig = normalizeCrowdFavoriteState(config);
   return stateConfig.crowd_favorite_voting_open;
 };
 
-export const hasCrowdFavoriteVotingStarted = async (config?: Partial<WildHacksConfig>): Promise<boolean> => {
-  const stateConfig = config ? normalizeCrowdFavoriteState(config) : await getCrowdFavoriteStateConfig();
+export const hasCrowdFavoriteVotingStarted = async (config: Partial<WildHacksConfig>): Promise<boolean> => {
+  const stateConfig = normalizeCrowdFavoriteState(config);
   return stateConfig.crowd_favorite_voting_started;
 };
 
-export const isCrowdFavoriteVotingClosed = async (config?: Partial<WildHacksConfig>): Promise<boolean> => {
-  const stateConfig = config ? normalizeCrowdFavoriteState(config) : await getCrowdFavoriteStateConfig();
+export const isCrowdFavoriteVotingClosed = async (config: Partial<WildHacksConfig>): Promise<boolean> => {
+  const stateConfig = normalizeCrowdFavoriteState(config);
   return stateConfig.crowd_favorite_voting_started && !stateConfig.crowd_favorite_voting_open;
 };
 
-export const isCrowdFavoritePresentationPhase = async (config?: Partial<WildHacksConfig>): Promise<boolean> => {
-  const stateConfig = config ? normalizeCrowdFavoriteState(config) : await getCrowdFavoriteStateConfig();
+export const isCrowdFavoritePresentationPhase = async (config: Partial<WildHacksConfig>): Promise<boolean> => {
+  const stateConfig = normalizeCrowdFavoriteState(config);
   return (
     stateConfig.crowd_favorite_opt_in_started &&
     !stateConfig.crowd_favorite_voting_started &&
