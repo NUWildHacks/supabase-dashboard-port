@@ -37,14 +37,9 @@ yarn-error.log*
 # vercel
 .vercel
 
-# firebase
-.firebase/
-.firebaserc.local
+# service account credentials
 *-service-account*.json
 serviceAccountKey.json
-firebase-debug.log
-firestore-debug.log
-ui-debug.log
 
 # typescript
 *.tsbuildinfo

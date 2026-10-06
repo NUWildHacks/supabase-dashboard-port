@@ -14,27 +14,9 @@ import {
   VIRTUAL_ZOOM_JUDGING_PATH,
 } from "./constants/routes.constants";
 
-const isDev = process.env.APP_ENV !== "production";
 const discordInviteDestination = process.env.DISCORD_INVITE_URL as string;
 const discordTeamDestination = process.env.DISCORD_TEAM_URL as string;
 const virtualZoomJudgingDestination = process.env.VIRTUAL_ZOOM_JUDGING_URL as string;
-
-const cspHeader = `
-  default-src 'self';
-  script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval'" : ""} ${isDev ? "https://vercel.live" : ""} https://*.firebaseapp.com https://apis.google.com;
-  style-src 'self' ${isDev ? "https://vercel.live" : ""} 'unsafe-inline';
-  img-src 'self' ${isDev ? "https://vercel.live https://vercel.com" : ""} blob: data:;
-  font-src 'self' ${isDev ? "https://vercel.live https://assets.vercel.com" : ""} data:;
-  connect-src 'self' ${isDev ? "https://vercel.live wss://ws-us3.pusher.com" : ""} https://*.firebaseapp.com https://*.googleapis.com https://github.com;
-  frame-src 'self' ${isDev ? "https://vercel.live" : ""} https://*.firebaseapp.com;
-  object-src 'none';
-  base-uri 'self';
-  form-action 'self';
-  frame-ancestors 'none';
-  upgrade-insecure-requests;
-`
-  .replace(/\s{2,}/g, " ")
-  .trim();
 
 const require = createRequire(import.meta.url);
 
@@ -47,15 +29,19 @@ const withMDX = createMDX({
 
 const nextConfig: NextConfig = {
   pageExtensions: ["js", "jsx", "ts", "tsx", "md", "mdx"],
+  experimental: {
+    // Resume uploads go through a server action and may be up to 5 MB (MAX_FILE_SIZE).
+    serverActions: { bodySizeLimit: "6mb" },
+  },
   async headers() {
     return [
       {
         source: "/:path*",
+        // proxy.ts sets the Content-Security-Policy header, because it needs a new nonce per request.
         headers: [
-          {
-            key: "Content-Security-Policy",
-            value: cspHeader,
-          },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=(), payment=()" },
         ],
       },
     ];

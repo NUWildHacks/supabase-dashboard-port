@@ -8,6 +8,7 @@ export type QRCodeScanPayload = {
   email?: string;
   role?: Role;
   issued_at?: number;
+  sig?: string;
 };
 
 export type EventCheckIn = BaseModel & {

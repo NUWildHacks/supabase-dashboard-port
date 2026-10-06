@@ -1,43 +1,51 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
+import supabaseAdmin from "@/config/supabase-admin";
 import {
   ADMIN,
   DASHBOARD_PATH,
   LOGIN_PATH,
-  TEAM_MATCHING_FORMATIONS_COLLECTION,
-  TEAM_MATCHING_FORMATIONS_COLLECTION_PROD,
-  TEAM_MATCHING_RUNS_COLLECTION,
-  TEAM_MATCHING_RUNS_COLLECTION_PROD,
-  TEAM_MATCHING_TEAMS_COLLECTION,
-  TEAM_MATCHING_TEAMS_COLLECTION_PROD,
-  WILDHACKS_COLLECTION,
-  WILDHACKS_CONFIG_DOC,
+  TEAM_MATCHING_FORMATIONS_TABLE,
+  TEAM_MATCHING_FORMATIONS_TABLE_PROD,
+  TEAM_MATCHING_RUNS_TABLE,
+  TEAM_MATCHING_RUNS_TABLE_PROD,
+  TEAM_MATCHING_TEAMS_TABLE,
+  TEAM_MATCHING_TEAMS_TABLE_PROD,
+  WILDHACKS_CONFIG_TABLE,
 } from "@/constants";
-import { getAuthenticatedUser } from "@/lib";
-import type { MatchedTeam, TeamFormation, TeamMatchingRun, TeamSuggestion, WildHacksConfig } from "@/types";
+import { fromRows, selectAllRows } from "@/lib";
+import { getAuthenticatedUser } from "@/lib/server";
+import type { MatchedTeam, TeamFormation, TeamMatchingRun, TeamSuggestion } from "@/types";
 
 export const getParticipantSuggestions = async (): Promise<TeamSuggestion[]> => {
   try {
     const redirectPath = `${LOGIN_PATH}?redirect=${encodeURIComponent(DASHBOARD_PATH)}`;
     const { id: userId, role } = await getAuthenticatedUser(redirectPath);
 
-    const db = getFirestore();
+    const { data: config } = await supabaseAdmin
+      .from(WILDHACKS_CONFIG_TABLE)
+      .select("team_matching_mode, results_released")
+      .eq("id", "config")
+      .maybeSingle()
+      .throwOnError();
+    // Participants see suggestions only after admins release the results.
+    if (role !== ADMIN && config?.results_released !== true) return [];
 
-    const configSnap = await db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_CONFIG_DOC).get();
-    const mode = (configSnap.data() as WildHacksConfig | undefined)?.team_matching_mode ?? "dev";
+    const mode = config?.team_matching_mode ?? "dev";
     const effectiveMode = role === ADMIN ? mode : "prod";
 
-    const runsCollection =
-      effectiveMode === "prod" ? TEAM_MATCHING_RUNS_COLLECTION_PROD : TEAM_MATCHING_RUNS_COLLECTION;
-    const teamsCollection =
-      effectiveMode === "prod" ? TEAM_MATCHING_TEAMS_COLLECTION_PROD : TEAM_MATCHING_TEAMS_COLLECTION;
-    const formationsCollection =
-      effectiveMode === "prod" ? TEAM_MATCHING_FORMATIONS_COLLECTION_PROD : TEAM_MATCHING_FORMATIONS_COLLECTION;
+    const runsTable = effectiveMode === "prod" ? TEAM_MATCHING_RUNS_TABLE_PROD : TEAM_MATCHING_RUNS_TABLE;
+    const teamsTable = effectiveMode === "prod" ? TEAM_MATCHING_TEAMS_TABLE_PROD : TEAM_MATCHING_TEAMS_TABLE;
+    const formationsTable =
+      effectiveMode === "prod" ? TEAM_MATCHING_FORMATIONS_TABLE_PROD : TEAM_MATCHING_FORMATIONS_TABLE;
 
-    const topRunsSnap = await db.collection(runsCollection).where("is_top", "==", true).orderBy("run_at", "desc").get();
-    const topRuns = topRunsSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as TeamMatchingRun);
+    const { data: topRunRows } = await supabaseAdmin
+      .from(runsTable)
+      .select()
+      .eq("is_top", true)
+      .order("run_at", { ascending: false })
+      .throwOnError();
+    const topRuns = fromRows<TeamMatchingRun>(topRunRows);
 
     const results: TeamSuggestion[] = [];
     const seen = new Set<string>();
@@ -53,7 +61,17 @@ export const getParticipantSuggestions = async (): Promise<TeamSuggestion[]> => 
       results.push({
         rank: (results.length + 1) as 1 | 2 | 3,
         team_id: team.id,
-        members: team.members,
+        // The card shows only names and roles, so do not send other members' survey answers.
+        members: team.members.map(({ user_id, name, roles }) => ({
+          user_id,
+          name,
+          roles,
+          skills: {},
+          experience_level: "",
+          work_style: "",
+          gender_preference: "",
+          where_staying: "",
+        })),
         score: team.score,
         match_reasons: team.match_reasons,
         where_to_meet: team.where_to_meet,
@@ -64,21 +82,26 @@ export const getParticipantSuggestions = async (): Promise<TeamSuggestion[]> => 
       if (results.length >= 3) break;
 
       // Primary formation
-      const teamsSnap = await db.collection(teamsCollection).where("run_id", "==", run.id).get();
-      const primary = teamsSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() }) as MatchedTeam)
-        .find((t) => t.members.some((m) => m.user_id === userId));
+      const teamRows = await selectAllRows((from, to) =>
+        supabaseAdmin.from(teamsTable).select().eq("run_id", run.id).order("id").range(from, to).throwOnError()
+      );
+      const primary = fromRows<MatchedTeam>(teamRows).find((t) => t.members.some((m) => m.user_id === userId));
       if (primary) tryAdd(primary);
 
       if (results.length >= 3) break;
 
       // Alternative formations (alt1, alt2)
-      const altDocs = await Promise.all(
-        [1, 2].map((i) => db.collection(formationsCollection).doc(`${run.id}_alt${i}`).get())
-      );
-      for (const altDoc of altDocs) {
-        if (!altDoc.exists || results.length >= 3) continue;
-        const formation = altDoc.data() as TeamFormation;
+      const { data: formationRows } = await supabaseAdmin
+        .from(formationsTable)
+        .select("run_id, formation_index, teams, fingerprint")
+        .in(
+          "id",
+          [1, 2].map((i) => `${run.id}_alt${i}`)
+        )
+        .throwOnError();
+      const formations = fromRows<TeamFormation>(formationRows).sort((a, b) => a.formation_index - b.formation_index);
+      for (const formation of formations) {
+        if (results.length >= 3) continue;
         const altTeam = formation.teams.find((t) => t.members.some((m) => m.user_id === userId));
         if (altTeam) tryAdd(altTeam);
       }

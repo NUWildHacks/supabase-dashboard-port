@@ -1,5 +1,3 @@
-"use server";
-
 import Link from "next/link";
 
 import { WILDHACKS_HOME } from "@/constants";

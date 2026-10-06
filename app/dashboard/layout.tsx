@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { PropsWithChildren } from "react";
 
 import { DASHBOARD_PATH, JUDGE, LOGIN_PATH, JUDGE_AND_MENTOR } from "@/constants";
-import { getAuthenticatedUser, onboardUser } from "@/lib";
+import { getAuthenticatedUser, onboardUser } from "@/lib/server";
 
 import { DashboardSidebar, OnboardingDialog } from "./_components";
 

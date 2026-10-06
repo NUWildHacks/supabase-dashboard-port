@@ -1,23 +1,16 @@
-"use server";
+import "server-only";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import {
-  JUDGING_ASSIGNMENTS_COLLECTION,
-  PLACEHOLDER_DOC,
-  PROJECTS_COLLECTION,
-  ROUND_1_COLLECTION,
-  ROUND_2_COLLECTION,
-  USERS_COLLECTION,
-} from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { JUDGING_ASSIGNMENTS_TABLE, PROJECTS_TABLE, USERS_TABLE } from "@/constants";
+import { fromRows, selectAllRows } from "@/lib";
 import type { User } from "@/types";
 
 import { ROUND_1, ROUND_2 } from "../../judging/constants";
 import { JudgingAssignment, JudgingRound, Project } from "../../judging/types";
 
 /**
- * Get all users from Firestore.
- * Retrieves all documents from the users collection and returns them as an array.
+ * Get all users from the database.
+ * Retrieves all rows from the users table and returns them as an array.
  * Returns an empty array if no users exist.
  *
  * @returns Promise resolving to an array of User objects
@@ -31,91 +24,74 @@ import { JudgingAssignment, JudgingRound, Project } from "../../judging/types";
  * ```
  */
 const getUsers = async (): Promise<User[]> => {
-  const db = getFirestore();
+  const userRows = await selectAllRows((from, to) =>
+    supabaseAdmin.from(USERS_TABLE).select().order("id").range(from, to).throwOnError()
+  );
 
-  const userDocRef = db.collection(USERS_COLLECTION);
-
-  const userDocSnapshots = await userDocRef.get();
-
-  // ensure that incomplete documents (e.g. new participants)
+  // ensure that incomplete rows (e.g. new participants)
   // are not included so it doesn't break
-  return userDocSnapshots.docs
-    .filter((doc) => doc.data().first_name)
-    .map((doc) => ({ id: doc.id, ...doc.data() }) as User);
+  return fromRows<User>(userRows).filter((user) => user.first_name);
 };
 
 /**
- * Get all judging assignments from Firestore.
- * Retrieves all documents from the judging assignments collection and returns them as an array.
- * Returns an empty array if no judging assignments exist.
+ * Get all judging assignments from the database.
+ * Retrieves all rows from the judging assignments table and returns them grouped by round.
+ * Returns empty arrays if no judging assignments exist.
  *
  * @returns Promise resolving to a map of JudgingRound to JudgingAssignment objects
  */
 const getJudgingAssignmentsMap = async (): Promise<Map<JudgingRound, JudgingAssignment[]>> => {
-  const db = getFirestore();
-
-  const round1JudgingAssignmentDocRef = db
-    .collection(JUDGING_ASSIGNMENTS_COLLECTION)
-    .doc(PLACEHOLDER_DOC)
-    .collection(ROUND_1_COLLECTION);
-  const round2JudgingAssignmentDocRef = db
-    .collection(JUDGING_ASSIGNMENTS_COLLECTION)
-    .doc(PLACEHOLDER_DOC)
-    .collection(ROUND_2_COLLECTION);
-
-  const [round1JudgingAssignmentDocSnapshots, round2JudgingAssignmentDocSnapshots] = await Promise.all([
-    round1JudgingAssignmentDocRef.get(),
-    round2JudgingAssignmentDocRef.get(),
-  ]);
+  // Rows keep `null` for room_id and judging_form, matching the JudgingAssignment type.
+  const judgingAssignmentRows = (await selectAllRows((from, to) =>
+    supabaseAdmin.from(JUDGING_ASSIGNMENTS_TABLE).select().order("id").range(from, to).throwOnError()
+  )) as JudgingAssignment[];
 
   const judgingAssignments = new Map<JudgingRound, JudgingAssignment[]>();
   judgingAssignments.set(
     ROUND_1,
-    round1JudgingAssignmentDocSnapshots.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as JudgingAssignment)
+    judgingAssignmentRows.filter((judgingAssignment) => judgingAssignment.judging_round === ROUND_1)
   );
   judgingAssignments.set(
     ROUND_2,
-    round2JudgingAssignmentDocSnapshots.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as JudgingAssignment)
+    judgingAssignmentRows.filter((judgingAssignment) => judgingAssignment.judging_round === ROUND_2)
   );
 
   return judgingAssignments;
 };
 
 /**
- * Get all projects from Firestore.
- * Retrieves all documents from the projects collection and returns them as an array.
- * Returns an empty array if no projects exist.
+ * Get all projects from the database.
+ * Retrieves all rows from the projects table and returns them grouped by round.
+ * Returns empty arrays if no projects exist.
  *
- * @returns Promise resolving to an array of Project objects
+ * @returns Promise resolving to a map of JudgingRound to Project objects
  * @example
  * ```ts
- * const projects = await getProjects();
- * console.log(`Found ${projects.length} projects`);
- * projects.forEach(project => {
+ * const projects = await getProjectsMap();
+ * projects.get(ROUND_1)?.forEach(project => {
  *   console.log(project.id, project.name, project.track);
  * });
  * ```
  */
 const getProjectsMap = async (): Promise<Map<JudgingRound, Project[]>> => {
-  const db = getFirestore();
+  const projectRows = await selectAllRows((from, to) =>
+    supabaseAdmin
+      .from(PROJECTS_TABLE)
+      .select("judging_round, id, name, track, devpost_url")
+      .order("judging_round")
+      .order("id")
+      .range(from, to)
+      .throwOnError()
+  );
 
-  const round1ProjectDocRef = db.collection(PROJECTS_COLLECTION).doc(PLACEHOLDER_DOC).collection(ROUND_1_COLLECTION);
-  const round2ProjectDocRef = db.collection(PROJECTS_COLLECTION).doc(PLACEHOLDER_DOC).collection(ROUND_2_COLLECTION);
-
-  const [round1ProjectDocSnapshots, round2ProjectDocSnapshots] = await Promise.all([
-    round1ProjectDocRef.get(),
-    round2ProjectDocRef.get(),
-  ]);
+  const toProjects = (round: JudgingRound): Project[] =>
+    projectRows
+      .filter((project) => project.judging_round === round)
+      .map(({ id, name, track, devpost_url }) => ({ id, name, track, devpost_url }) as Project);
 
   const projects = new Map<JudgingRound, Project[]>();
-  projects.set(
-    ROUND_1,
-    round1ProjectDocSnapshots.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Project)
-  );
-  projects.set(
-    ROUND_2,
-    round2ProjectDocSnapshots.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Project)
-  );
+  projects.set(ROUND_1, toProjects(ROUND_1));
+  projects.set(ROUND_2, toProjects(ROUND_2));
 
   return projects;
 };

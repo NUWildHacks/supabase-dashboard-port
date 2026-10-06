@@ -1,48 +1,38 @@
-"use server";
+import "server-only";
 
-import { getFirestore } from "firebase-admin/firestore";
+import supabaseAdmin from "@/config/supabase-admin";
+import { WILDHACKS_CONFIG_TABLE } from "@/constants";
+import type { WildHacksConfig } from "@/types";
 
-import { WILDHACKS_COLLECTION, WILDHACKS_CONFIG_DOC, WILDHACKS_SECRETS_DOC } from "@/constants";
+import { fromRow } from "./db.lib";
 
 /**
- * Get the WildHacks configuration document snapshot from Firestore.
- * Throws an error if the document does not exist.
+ * Get the WildHacks configuration.
+ * Throws an error if the configuration row does not exist.
  *
- * @returns Promise resolving to the Firestore document snapshot containing WildHacks configuration
- * @throws {Error} If the configuration document is not found
+ * @returns Promise resolving to the WildHacks configuration
+ * @throws {Error} If the configuration row is not found
  * @example
  * ```ts
- * const configSnapshot = await getConfigDocSnapshot();
- * const config = configSnapshot.data() as WildHacksConfig;
+ * const config = await getConfig();
  * console.log(config.start_time, config.end_time);
  * ```
  */
-const getConfigDocSnapshot = async () => {
-  const db = getFirestore();
+const getConfig = async (): Promise<WildHacksConfig> => {
+  const { data } = await supabaseAdmin
+    .from(WILDHACKS_CONFIG_TABLE)
+    .select()
+    .eq("id", "config")
+    .maybeSingle()
+    .throwOnError();
 
-  const configDocRef = db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_CONFIG_DOC);
-
-  const configDocSnapshot = await configDocRef.get();
-
-  if (!configDocSnapshot.exists) {
-    throw new Error("WildHacks configuration document not found");
+  if (!data) {
+    throw new Error("WildHacks configuration not found");
   }
 
-  return configDocSnapshot;
+  const config = fromRow<WildHacksConfig & { id?: string }>(data);
+  delete config.id;
+  return config;
 };
 
-const getSecretsDocSnapshot = async () => {
-  const db = getFirestore();
-
-  const secretsDocRef = db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_SECRETS_DOC);
-
-  const secretsDocSnapshot = await secretsDocRef.get();
-
-  if (!secretsDocSnapshot.exists) {
-    throw new Error("WildHacks secrets document not found");
-  }
-
-  return secretsDocSnapshot;
-};
-
-export { getConfigDocSnapshot, getSecretsDocSnapshot };
+export { getConfig };

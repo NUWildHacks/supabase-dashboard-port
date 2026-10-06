@@ -1,10 +1,10 @@
-import { getFirestore } from "firebase-admin/firestore";
-
-import { EVENTS_COLLECTION } from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { EVENTS_TABLE } from "@/constants";
+import { selectAllRows } from "@/lib";
 
 import type { CheckInEventOption } from "../types";
 
-type CheckInEventDocument = Partial<Omit<CheckInEventOption, "id">>;
+type CheckInEventRow = Partial<Omit<CheckInEventOption, "id">> & { id: string };
 
 const normalizeTimestamp = (value: unknown): number => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -24,15 +24,19 @@ const normalizeText = (value: unknown, fallback: string): string => {
 };
 
 export const getCheckInEvents = async (): Promise<CheckInEventOption[]> => {
-  const db = getFirestore();
-  const eventsSnapshot = await db.collection(EVENTS_COLLECTION).get();
+  const data = await selectAllRows((from, to) =>
+    supabaseAdmin
+      .from(EVENTS_TABLE)
+      .select("id, title, location, start_time, end_time")
+      .order("id")
+      .range(from, to)
+      .throwOnError()
+  );
 
-  return eventsSnapshot.docs
-    .map((eventDocSnapshot) => {
-      const eventData = eventDocSnapshot.data() as CheckInEventDocument;
-
+  return ((data ?? []) as CheckInEventRow[])
+    .map((eventData) => {
       return {
-        id: eventDocSnapshot.id,
+        id: eventData.id,
         title: normalizeText(eventData.title, "Untitled event"),
         location: normalizeText(eventData.location, "TBD"),
         start_time: normalizeTimestamp(eventData.start_time),

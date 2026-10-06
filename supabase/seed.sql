@@ -1,0 +1,2 @@
+-- The default single-row records are created by migration 20261004000002_fix_audit_findings.sql.
+-- Add local-only test data here if needed.

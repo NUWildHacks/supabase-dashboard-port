@@ -1,6 +1,5 @@
 import { DASHBOARD_SCHEDULE_PATH, LOGIN_PATH } from "@/constants";
-import { getAuthenticatedUser, getConfigDocSnapshot } from "@/lib";
-import type { WildHacksConfig } from "@/types";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
 
 import { ScheduleDisplay } from "./_components";
 
@@ -9,8 +8,7 @@ const SchedulePage = async () => {
 
   const { role } = await getAuthenticatedUser(redirectPath);
 
-  const configDocSnapshot = await getConfigDocSnapshot();
-  const wildhacksConfig = configDocSnapshot.data() as WildHacksConfig;
+  const wildhacksConfig = await getConfig();
 
   return <ScheduleDisplay {...wildhacksConfig} userRole={role} />;
 };

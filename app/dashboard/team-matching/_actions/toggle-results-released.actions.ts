@@ -1,10 +1,10 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
-import { ADMIN, DASHBOARD_PATH, LOGIN_PATH, WILDHACKS_COLLECTION, WILDHACKS_CONFIG_DOC } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import supabaseAdmin from "@/config/supabase-admin";
+import { ADMIN, DASHBOARD_PATH, LOGIN_PATH, WILDHACKS_CONFIG_TABLE } from "@/constants";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { ActionResult, TeamMatchingMode } from "@/types";
 
 // Dev mode: sets results_released_dev (only admins see this; participants are unaffected)
@@ -16,14 +16,18 @@ export const setResultsReleased = async (released: boolean, mode: TeamMatchingMo
     const roleCheck = requireRole(user, ADMIN);
     if (roleCheck) return roleCheck;
 
-    const db = getFirestore();
+    if (typeof released !== "boolean") return { success: false, error: "Invalid value." };
+
     const field = mode === "prod" ? "results_released" : "results_released_dev";
-    await db
-      .collection(WILDHACKS_COLLECTION)
-      .doc(WILDHACKS_CONFIG_DOC)
+    const { data: updatedRows } = await supabaseAdmin
+      .from(WILDHACKS_CONFIG_TABLE)
       .update({
         [field]: released,
-      });
+      })
+      .eq("id", "config")
+      .select("id")
+      .throwOnError();
+    if (updatedRows.length === 0) throw new Error("WildHacks configuration not found");
 
     // Only revalidate the participant-facing page in prod mode
     if (mode === "prod") revalidatePath(DASHBOARD_PATH);

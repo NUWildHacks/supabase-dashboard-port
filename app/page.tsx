@@ -1,15 +1,10 @@
-"use server";
-
 import Image from "next/image";
 
-import "@/config/firebase-admin";
 import { Completed, Footer, Navbar, Closed } from "@/app/_components";
-import { getConfigDocSnapshot } from "@/lib";
-import type { WildHacksConfig } from "@/types";
+import { getConfig } from "@/lib/server";
 
 const RootPage = async () => {
-  const configDocSnapshot = await getConfigDocSnapshot();
-  const { end_time } = configDocSnapshot.data() as WildHacksConfig;
+  const { end_time } = await getConfig();
 
   const now = new Date().getTime();
 

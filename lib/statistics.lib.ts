@@ -1,15 +1,16 @@
-"use server";
-
-import { getFirestore } from "firebase-admin/firestore";
+import "server-only";
 import { cache } from "react";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import { PARTICIPANT, JUDGE, JUDGE_AND_MENTOR, ADMIN } from "@/constants";
-import { PROJECTS_COLLECTION, USERS_COLLECTION } from "@/constants/db.constants";
+import { PROJECTS_TABLE, USERS_TABLE } from "@/constants/db.constants";
 import type { WildHacksStatistics } from "@/types";
 
+import { ROUND_1 } from "../app/dashboard/judging/constants";
+
 /**
- * Calculate statistics by counting documents in Firestore.
- * Uses admin SDK for efficient queries and caches results for 30 seconds.
+ * Calculate statistics by counting rows in the database.
+ * Uses the admin client and caches results for the current request.
  *
  * @returns Promise resolving to WildHacksStatistics object
  * @example
@@ -19,42 +20,34 @@ import type { WildHacksStatistics } from "@/types";
  * ```
  */
 export const calculateStatistics = cache(async (): Promise<WildHacksStatistics> => {
-  const db = getFirestore();
+  const countUsers = async (role: string) => {
+    const { count } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("id", { count: "exact", head: true })
+      .eq("role", role)
+      .throwOnError();
+    return count ?? 0;
+  };
 
-  const [usersSnapshot, projectsSnapshot] = await Promise.all([
-    db.collection(USERS_COLLECTION).get(),
-    db.collection(PROJECTS_COLLECTION).get(),
+  const countProjects = async () => {
+    const { count } = await supabaseAdmin
+      .from(PROJECTS_TABLE)
+      .select("id", { count: "exact", head: true })
+      .eq("judging_round", ROUND_1)
+      .throwOnError();
+    return count ?? 0;
+  };
+
+  const [participants, judges, mentors, admins, projects] = await Promise.all([
+    countUsers(PARTICIPANT),
+    countUsers(JUDGE),
+    countUsers(JUDGE_AND_MENTOR),
+    countUsers(ADMIN),
+    countProjects(),
   ]);
 
-  let participants = 0;
-  let judges = 0;
-  let mentors = 0;
-  let admins = 0;
-
-  usersSnapshot.forEach((doc) => {
-    const userData = doc.data();
-    const role = userData.role;
-
-    if (role === PARTICIPANT) {
-      participants++;
-    } else if (role === JUDGE) {
-      judges++;
-    } else if (role === JUDGE_AND_MENTOR) {
-      mentors++;
-    } else if (role === ADMIN) {
-      admins++;
-    }
-  });
-
-  const projects = projectsSnapshot.size;
-
-  let submissions = 0;
-  projectsSnapshot.forEach((doc) => {
-    const projectData = doc.data();
-    if (projectData.submitted_at != null) {
-      submissions++;
-    }
-  });
+  // Projects do not record a submission time yet, so submissions stays 0 (same as before the migration).
+  const submissions = 0;
 
   return {
     participants,

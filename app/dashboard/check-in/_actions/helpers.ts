@@ -33,6 +33,7 @@ export const parseScanPayload = (scanPayload: QRCodeScanPayload | string): Parse
           email: typeof parsedPayload.email === "string" ? parsedPayload.email.trim() : undefined,
           role: typeof parsedPayload.role === "string" ? (parsedPayload.role as User["role"]) : undefined,
           issued_at: typeof parsedPayload.issued_at === "number" ? parsedPayload.issued_at : undefined,
+          sig: typeof parsedPayload.sig === "string" ? parsedPayload.sig : undefined,
         };
       } else {
         normalizedPayload = { user_id: rawPayload };

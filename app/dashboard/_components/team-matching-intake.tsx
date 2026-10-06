@@ -71,9 +71,9 @@ const WHERE_STAYING_OPTIONS = [
 ] as const;
 
 const MAX_REQUIRED_TEAMMATES = 3;
+const MAX_ADDITIONAL_NOTES_LENGTH = 1000;
 
 type TeammateEntry = {
-  userId: string;
   email: string;
   name: string;
 };
@@ -175,10 +175,7 @@ const TeamMatchingIntake = ({
 
     setForm((prev) => ({
       ...prev,
-      required_teammates: [
-        ...prev.required_teammates,
-        { userId: result.userId, email: teammateEmail, name: result.name },
-      ],
+      required_teammates: [...prev.required_teammates, { email: teammateEmail, name: result.name }],
     }));
     setTeammateInput("");
   };
@@ -231,7 +228,7 @@ const TeamMatchingIntake = ({
       ...form,
       gender_preference: form.gender_preference || "no_preference",
       where_staying: form.where_staying || "prefer_not_to_say",
-      required_teammates: form.required_teammates.map((t) => t.userId),
+      required_teammates: form.required_teammates.map((t) => t.email),
       consent: consentChecked,
     });
 
@@ -584,6 +581,7 @@ const TeamMatchingIntake = ({
                         <FieldLabel htmlFor="additional_notes">Anything else to add?</FieldLabel>
                         <Textarea
                           id="additional_notes"
+                          maxLength={MAX_ADDITIONAL_NOTES_LENGTH}
                           placeholder="Any project ideas, constraints, or other notes…"
                           value={form.additional_notes}
                           onChange={(e) => handleChange("additional_notes", e.target.value)}

@@ -1,27 +1,30 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
-  CROWD_FAVORITES_COLLECTION,
   DASHBOARD_CROWD_FAVORITE_PATH,
   DASHBOARD_PATH,
   LOGIN_PATH,
   PARTICIPANT,
-  USERS_COLLECTION,
+  TEN_MINUTES,
+  USERS_TABLE,
 } from "@/constants";
-import { getAuthenticatedUser, requireRole, getConfigDocSnapshot } from "@/lib";
-import type { ActionResult, CrowdFavoriteProject, ParticipantUser, WildHacksConfig } from "@/types";
+import { isWithinRateLimit, RATE_LIMIT_TOO_MANY_ATTEMPTS } from "@/lib/rate-limit.lib";
+import { getAuthenticatedUser, requireRole, getConfig } from "@/lib/server";
+import type { ActionResult, CrowdFavoriteProject } from "@/types";
 
 import { getCrowdFavoriteProjectForUser } from "../_lib";
 import { crowdFavoriteOptInFormSchema, type CrowdFavoriteOptInFormSchema } from "../_schemas";
 import { isCrowdFavoriteOptInOpen } from "../constants";
 
+// Same limit as verifyTeamMemberEmail, on the same rate-limit key (one call per email checked).
+const EMAIL_LOOKUP_LIMIT = 30;
+
 type CrowdFavoriteOptInResult = ActionResult<CrowdFavoriteOptInFormSchema>;
 
 type CandidateMember = {
-  refPath: string;
   id: string;
   first_name: string;
   email: string;
@@ -36,8 +39,7 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
     if (roleCheck) return roleCheck;
 
     // Fetch config once to pass to all helpers
-    const configDocSnapshot = await getConfigDocSnapshot();
-    const config = configDocSnapshot.data() as WildHacksConfig;
+    const config = await getConfig();
 
     if (!(await isCrowdFavoriteOptInOpen(config))) {
       return { success: false, error: "Crowd favorite opt-in is currently closed" };
@@ -56,7 +58,6 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
     }
 
     const data = parsed.data;
-    const db = getFirestore();
     const now = Date.now();
 
     const normalizedEmails = data.team_members.map((member) => member.email.trim().toLowerCase());
@@ -69,31 +70,38 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       };
     }
 
-    const candidateSnapshots = await Promise.all(
-      normalizedEmails.map((email) => db.collection(USERS_COLLECTION).where("email", "==", email).limit(1).get())
+    for (let i = 0; i < normalizedEmails.length; i += 1) {
+      if (!(await isWithinRateLimit(`email-lookup:${caller.id}`, EMAIL_LOOKUP_LIMIT, TEN_MINUTES))) {
+        return { success: false, error: RATE_LIMIT_TOO_MANY_ATTEMPTS, field: "team_members" };
+      }
+    }
+
+    // Match registered participants only, and use one message for every other case, so the
+    // form cannot tell whether an email belongs to an admin, judge, or mentor.
+    const candidateResults = await Promise.all(
+      normalizedEmails.map((email) =>
+        supabaseAdmin
+          .from(USERS_TABLE)
+          .select("id, role, first_name")
+          .eq("email", email)
+          .eq("role", PARTICIPANT)
+          .not("first_name", "is", null)
+          .limit(1)
+          .maybeSingle()
+          .throwOnError()
+      )
     );
 
     const candidateMembers: CandidateMember[] = [];
-    for (let index = 0; index < candidateSnapshots.length; index += 1) {
-      const snapshot = candidateSnapshots[index];
+    for (let index = 0; index < candidateResults.length; index += 1) {
+      const { data: user } = candidateResults[index];
       const email = normalizedEmails[index];
 
-      if (snapshot.empty) {
-        return { success: false, error: `No participant found for ${email}`, field: "team_members" };
+      if (!user || !user.first_name) {
+        return { success: false, error: `No registered participant found for ${email}`, field: "team_members" };
       }
 
-      const doc = snapshot.docs[0];
-      const user = doc.data() as Omit<ParticipantUser, "id">;
-
-      if (user.role !== PARTICIPANT) {
-        return {
-          success: false,
-          error: `${email} is not a participant`,
-          field: "team_members",
-        };
-      }
-
-      if (await getCrowdFavoriteProjectForUser(doc.id)) {
+      if (await getCrowdFavoriteProjectForUser(user.id)) {
         return {
           success: false,
           error: `${email} is already assigned to a crowd favorite project`,
@@ -101,17 +109,8 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
         };
       }
 
-      if (!user.first_name) {
-        return {
-          success: false,
-          error: `${email} has an incomplete participant profile`,
-          field: "team_members",
-        };
-      }
-
       candidateMembers.push({
-        refPath: doc.ref.path,
-        id: doc.id,
+        id: user.id,
         first_name: user.first_name,
         email,
       });
@@ -121,58 +120,72 @@ const optInToCrowdFavorite = async (rawData: CrowdFavoriteOptInFormSchema): Prom
       return { success: false, error: "You are already assigned to a crowd favorite project" };
     }
 
-    const callerRef = db.collection(USERS_COLLECTION).doc(caller.id);
-    const crowdFavoriteRef = db.collection(CROWD_FAVORITES_COLLECTION).doc();
+    // Re-check the caller and teammates right before the write.
+    const { data: callerRow } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("role")
+      .eq("id", caller.id)
+      .maybeSingle()
+      .throwOnError();
+    if (!callerRow) {
+      throw new Error("Authenticated user no longer exists");
+    }
 
-    await db.runTransaction(async (transaction) => {
-      const callerSnapshot = await transaction.get(callerRef);
-      if (!callerSnapshot.exists) {
-        throw new Error("Authenticated user no longer exists");
+    if (callerRow.role !== PARTICIPANT) {
+      throw new Error("Only participants can opt in to crowd favorite");
+    }
+
+    const { data: teammateRows } = await supabaseAdmin
+      .from(USERS_TABLE)
+      .select("id, role")
+      .in(
+        "id",
+        candidateMembers.map((member) => member.id)
+      )
+      .throwOnError();
+
+    candidateMembers.forEach((member) => {
+      const teammate = teammateRows.find((row) => row.id === member.id);
+
+      if (!teammate) {
+        throw new Error(`Participant ${member.email} no longer exists`);
       }
 
-      const callerData = callerSnapshot.data() as Omit<ParticipantUser, "id">;
-      if (callerData.role !== PARTICIPANT) {
-        throw new Error("Only participants can opt in to crowd favorite");
+      if (teammate.role !== PARTICIPANT) {
+        throw new Error(`${member.email} is not a participant`);
       }
-
-      const teammateRefs = candidateMembers.map((member) => db.doc(member.refPath));
-      const teammateSnapshots = await Promise.all(teammateRefs.map((ref) => transaction.get(ref)));
-
-      teammateSnapshots.forEach((snapshot, index) => {
-        const teammateEmail = candidateMembers[index].email;
-
-        if (!snapshot.exists) {
-          throw new Error(`Participant ${teammateEmail} no longer exists`);
-        }
-
-        const teammateData = snapshot.data() as Omit<ParticipantUser, "id">;
-        if (teammateData.role !== PARTICIPANT) {
-          throw new Error(`${teammateEmail} is not a participant`);
-        }
-      });
-
-      const teamMembers: CrowdFavoriteProject["team_members"] = [
-        {
-          id: caller.id,
-          first_name: caller.first_name,
-          email: caller.email.toLowerCase(),
-        },
-        ...candidateMembers.map((member) => ({
-          id: member.id,
-          first_name: member.first_name,
-          email: member.email,
-        })),
-      ];
-
-      transaction.set(crowdFavoriteRef, {
-        project_name: data.project_name,
-        devpost_url: data.devpost_url,
-        team_members: teamMembers,
-        team_member_ids: teamMembers.map((m) => m.id),
-        created_at: now,
-        updated_at: now,
-      } as Omit<CrowdFavoriteProject, "id">);
     });
+
+    const teamMembers: CrowdFavoriteProject["team_members"] = [
+      {
+        id: caller.id,
+        first_name: caller.first_name,
+        email: caller.email.toLowerCase(),
+      },
+      ...candidateMembers.map((member) => ({
+        id: member.id,
+        first_name: member.first_name,
+        email: member.email,
+      })),
+    ];
+
+    // The database function checks again, under a lock, that no member is on another project,
+    // so two opt-ins at the same time cannot place one person on two projects.
+    const { data: projectId } = await supabaseAdmin
+      .rpc("create_crowd_favorite", {
+        p_project_name: data.project_name,
+        p_devpost_url: data.devpost_url,
+        p_team_members: teamMembers,
+        p_now: now,
+      })
+      .throwOnError();
+    if (!projectId) {
+      return {
+        success: false,
+        error: "You or a teammate joined another crowd favorite project. Refresh the page and try again.",
+        field: "team_members",
+      };
+    }
 
     revalidatePath(DASHBOARD_CROWD_FAVORITE_PATH);
     revalidatePath(DASHBOARD_PATH);

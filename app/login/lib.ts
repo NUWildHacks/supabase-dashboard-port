@@ -1,38 +1,33 @@
-"use server";
+import type { Provider } from "@supabase/supabase-js";
+import { toast } from "sonner";
 
-import { FirebaseAppError } from "firebase-admin/app";
-import type { UserRecord } from "firebase-admin/auth";
-
-import firebaseAdmin from "@/config/firebase-admin";
-import { USER_NOT_FOUND } from "@/constants";
+import { createSupabaseBrowserClient } from "@/config/supabase-browser";
+import { AUTH_CALLBACK_PATH } from "@/constants";
+import { validateRedirectPath } from "@/lib/path.lib";
 
 /**
- * Find a Firebase user by email address.
- * Uses Firebase Admin SDK to search for a user with the given email.
+ * Start an OAuth sign-in. The browser leaves the page for the provider, then returns to
+ * the auth callback route, which creates the session and redirects to `?redirect=` (if valid).
+ * Supabase links Google and GitHub identities that share a verified email automatically.
  *
- * @param email - The email address to search for
- * @returns Promise resolving to the UserRecord if found, null otherwise
- * @throws {Error} If there's an error querying Firebase Auth
- * @example
- * ```ts
- * const user = await findUserByEmail("user@example.com");
- * if (user) {
- *   console.log("User found:", user.uid);
- * }
- * ```
+ * @param provider - The OAuth provider ("google" or "github")
+ * @param scopes - Optional space-separated provider scopes
  */
-export const findUserByEmail = async (email: string): Promise<UserRecord | null> => {
-  try {
-    const adminAuth = firebaseAdmin.auth();
-    const user = await adminAuth.getUserByEmail(email);
-    return user;
-  } catch (e) {
-    if (e instanceof FirebaseAppError && e.code === USER_NOT_FOUND) {
-      return null;
-    }
+export const signInWithProvider = async (provider: Provider, scopes?: string) => {
+  const supabase = createSupabaseBrowserClient();
 
-    const errorMessage = e instanceof Error ? e.message : "An unknown error occurred";
-    console.error("Error finding user by email:", errorMessage);
-    throw e;
+  const searchParams = new URLSearchParams(window.location.search);
+  const redirectTo = validateRedirectPath(searchParams.get("redirect"));
+
+  const callbackUrl = new URL(AUTH_CALLBACK_PATH, window.location.origin);
+  callbackUrl.searchParams.set("redirect", redirectTo);
+
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo: callbackUrl.toString(), scopes },
+  });
+
+  if (error) {
+    toast.error("Login failed", { description: error.message });
   }
 };

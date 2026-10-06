@@ -1,16 +1,22 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
+import { PostgrestError } from "@supabase/supabase-js";
 
+import supabaseAdmin from "@/config/supabase-admin";
 import {
-  TEAM_MATCHING_INTAKE_COLLECTION,
-  USERS_COLLECTION,
+  TEAM_MATCHING_INTAKE_TABLE,
+  USERS_TABLE,
   LOGIN_PATH,
   DASHBOARD_PATH,
   PARTICIPANT,
+  TEN_MINUTES,
 } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import { isWithinRateLimit, RATE_LIMIT_TOO_MANY_ATTEMPTS } from "@/lib/rate-limit.lib";
+import { getAuthenticatedUser, getConfig, requireRole } from "@/lib/server";
 import type { ActionResult } from "@/types";
+
+// Postgres error code for a unique constraint violation
+const UNIQUE_VIOLATION = "23505";
 
 const VALID_EXPERIENCE_LEVELS = ["beginner", "intermediate", "experienced"] as const;
 const VALID_WORK_STYLES = ["competitive", "casual", "in_between"] as const;
@@ -40,6 +46,9 @@ const VALID_SKILLS = [
   "Docker / DevOps",
 ] as const;
 const MAX_REQUIRED_TEAMMATES = 3;
+const MAX_ADDITIONAL_NOTES_LENGTH = 1000;
+// Same limit as verifyTeammateEmail, on the same rate-limit key.
+const EMAIL_LOOKUP_LIMIT = 30;
 
 export type TeamMatchingIntakeData = {
   experience_level: string;
@@ -48,6 +57,7 @@ export type TeamMatchingIntakeData = {
   additional_notes: string;
   preferred_team_size: number;
   work_style: string;
+  /** Emails of required teammates. The server looks up their user IDs. */
   required_teammates: string[];
   consent: boolean;
   gender_preference?: string;
@@ -65,7 +75,12 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
 
     const { id: userId } = user;
 
-    if (!data.consent) {
+    const { end_time } = await getConfig();
+    if (Date.now() >= end_time) {
+      return { success: false, error: "Team matching is closed." };
+    }
+
+    if (data.consent !== true) {
       return { success: false, error: "You must consent to participate in team matching." };
     }
 
@@ -83,6 +98,8 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
 
     if (
       typeof data.skills !== "object" ||
+      data.skills === null ||
+      Array.isArray(data.skills) ||
       Object.keys(data.skills).some((k) => !VALID_SKILLS.includes(k as (typeof VALID_SKILLS)[number])) ||
       Object.values(data.skills).some((v) => typeof v !== "number" || v < 0 || v > 5)
     ) {
@@ -119,6 +136,10 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
       return { success: false, error: "Invalid where staying value." };
     }
 
+    if (typeof data.additional_notes !== "string" || data.additional_notes.length > MAX_ADDITIONAL_NOTES_LENGTH) {
+      return { success: false, error: `Additional notes must be ${MAX_ADDITIONAL_NOTES_LENGTH} characters or less.` };
+    }
+
     if (
       !Array.isArray(data.required_teammates) ||
       data.required_teammates.length > MAX_REQUIRED_TEAMMATES ||
@@ -127,36 +148,75 @@ export const submitTeamMatchingIntake = async (data: TeamMatchingIntakeData): Pr
       return { success: false, error: "Invalid required teammates." };
     }
 
-    if (data.required_teammates.includes(userId)) {
+    const teammateEmails = data.required_teammates.map((e) => e.trim().toLowerCase());
+
+    if (teammateEmails.includes(user.email.toLowerCase())) {
       return { success: false, error: "You cannot add yourself as a required teammate." };
     }
 
-    if (new Set(data.required_teammates).size !== data.required_teammates.length) {
+    if (new Set(teammateEmails).size !== teammateEmails.length) {
       return { success: false, error: "Duplicate required teammates are not allowed." };
     }
 
     const now = Date.now();
-    const db = getFirestore();
 
-    if (data.required_teammates.length > 0) {
-      const teammateRefs = data.required_teammates.map((id) => db.collection(USERS_COLLECTION).doc(id));
-      const teammateDocs = await db.getAll(...teammateRefs);
-      if (teammateDocs.some((d) => !d.exists)) {
-        return { success: false, error: "One or more required teammates could not be found." };
-      }
-    }
-    const docRef = db.collection(TEAM_MATCHING_INTAKE_COLLECTION).doc(userId);
-    const existing = await docRef.get();
-
-    if (existing.exists) {
+    const { data: existingIntake } = await supabaseAdmin
+      .from(TEAM_MATCHING_INTAKE_TABLE)
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle()
+      .throwOnError();
+    if (existingIntake) {
       return { success: false, error: "You have already submitted the team matching survey." };
     }
 
-    await docRef.set({
-      ...data,
-      user_id: userId,
-      created_at: now,
-    });
+    // Look up the teammates' user IDs from their emails. Only registered participants can be
+    // teammates. The lookup shares the email lookup rate limit, so it cannot be used to test emails.
+    let requiredTeammateIds: string[] = [];
+    if (teammateEmails.length > 0) {
+      if (!(await isWithinRateLimit(`email-lookup:${userId}`, EMAIL_LOOKUP_LIMIT, TEN_MINUTES))) {
+        return { success: false, error: RATE_LIMIT_TOO_MANY_ATTEMPTS };
+      }
+
+      const { data: teammates } = await supabaseAdmin
+        .from(USERS_TABLE)
+        .select("id, email")
+        .in("email", teammateEmails)
+        .eq("role", PARTICIPANT)
+        .not("first_name", "is", null)
+        .throwOnError();
+      const idByEmail = new Map((teammates ?? []).map((row) => [row.email as string, row.id as string]));
+      if (teammateEmails.some((email) => !idByEmail.has(email))) {
+        return { success: false, error: "One or more required teammates could not be found." };
+      }
+      requiredTeammateIds = teammateEmails.map((email) => idByEmail.get(email) as string);
+    }
+
+    // The user_id primary key rejects a second submission with a unique violation
+    try {
+      await supabaseAdmin
+        .from(TEAM_MATCHING_INTAKE_TABLE)
+        .insert({
+          user_id: userId,
+          experience_level: data.experience_level,
+          preferred_roles: data.preferred_roles,
+          skills: data.skills,
+          additional_notes: data.additional_notes,
+          preferred_team_size: data.preferred_team_size,
+          work_style: data.work_style,
+          required_teammates: requiredTeammateIds,
+          consent: data.consent,
+          gender_preference: data.gender_preference ?? null,
+          where_staying: data.where_staying ?? null,
+          created_at: now,
+        })
+        .throwOnError();
+    } catch (err) {
+      if (err instanceof PostgrestError && err.code === UNIQUE_VIOLATION) {
+        return { success: false, error: "You have already submitted the team matching survey." };
+      }
+      throw err;
+    }
 
     return { success: true };
   } catch (error) {

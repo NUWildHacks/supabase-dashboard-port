@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { DASHBOARD_MENTORING_PATH, DASHBOARD_PATH, JUDGE_AND_MENTOR, LOGIN_PATH } from "@/constants";
-import { getAuthenticatedUser } from "@/lib";
+import { getAuthenticatedUser } from "@/lib/server";
 
 import { MentoringDisplay } from "./_components";
 

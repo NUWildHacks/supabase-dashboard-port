@@ -1,5 +1,6 @@
 import { ADMIN, DASHBOARD_SETTINGS_PATH, JUDGE, LOGIN_PATH, JUDGE_AND_MENTOR, PARTICIPANT } from "@/constants";
-import { getAuthenticatedUser, getConfigDocSnapshot, getSecretsDocSnapshot } from "@/lib";
+import { getSecrets } from "@/lib/secrets.lib";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
 import type {
   AdminUser,
   JudgeUser,
@@ -25,14 +26,8 @@ const SettingsPage = async () => {
 
   let wildHacksConfig: (WildHacksConfig & WildHacksSecrets) | undefined;
   if (user.role === ADMIN) {
-    const [configDocSnapshot, secretsDocSnapshot] = await Promise.all([
-      getConfigDocSnapshot(),
-      getSecretsDocSnapshot(),
-    ]);
-    wildHacksConfig = {
-      ...(configDocSnapshot.data() as WildHacksConfig),
-      ...(secretsDocSnapshot.data() as WildHacksSecrets),
-    };
+    const [config, secrets] = await Promise.all([getConfig(), getSecrets()]);
+    wildHacksConfig = { ...config, ...secrets };
   }
 
   return (

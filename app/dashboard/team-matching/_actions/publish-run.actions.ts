@@ -1,18 +1,10 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
-import {
-  ADMIN,
-  DASHBOARD_PATH,
-  LOGIN_PATH,
-  TEAM_MATCHING_RUNS_COLLECTION,
-  TEAM_MATCHING_RUNS_COLLECTION_PROD,
-  WILDHACKS_COLLECTION,
-  WILDHACKS_CONFIG_DOC,
-} from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import supabaseAdmin from "@/config/supabase-admin";
+import { ADMIN, DASHBOARD_PATH, LOGIN_PATH } from "@/constants";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { ActionResult, TeamMatchingMode } from "@/types";
 
 export const publishRun = async (runId: string, mode: TeamMatchingMode = "dev"): Promise<ActionResult> => {
@@ -22,20 +14,13 @@ export const publishRun = async (runId: string, mode: TeamMatchingMode = "dev"):
     const roleCheck = requireRole(user, ADMIN);
     if (roleCheck) return roleCheck;
 
-    const db = getFirestore();
-    const collection = mode === "prod" ? TEAM_MATCHING_RUNS_COLLECTION_PROD : TEAM_MATCHING_RUNS_COLLECTION;
-    const runRef = db.collection(collection).doc(runId);
-    const runSnap = await runRef.get();
+    // Publishing the run and making it the active run happen in one transaction.
+    const { data: result } = await supabaseAdmin
+      .rpc("publish_matching_run", { p_run_id: runId, p_mode: mode })
+      .throwOnError();
 
-    if (!runSnap.exists) return { success: false, error: "Run not found." };
-    if (runSnap.data()?.status !== "draft") return { success: false, error: "Only draft runs can be published." };
-
-    const batch = db.batch();
-    batch.update(runRef, { status: "published" });
-    batch.update(db.collection(WILDHACKS_COLLECTION).doc(WILDHACKS_CONFIG_DOC), {
-      active_matching_run_id: runId,
-    });
-    await batch.commit();
+    if (result === "not_found") return { success: false, error: "Run not found." };
+    if (result === "not_draft") return { success: false, error: "Only draft runs can be published." };
 
     revalidatePath(DASHBOARD_PATH);
     return { success: true };

@@ -82,18 +82,16 @@ export const githubUsernameSchema = z
   .refine((username) => !username.includes("--"), { message: "GitHub username cannot have consecutive hyphens" });
 
 /**
- * Firestore user ID schema.
- * Validates that a string matches the format of Firestore auto-generated document IDs:
- * - Exactly 28 characters long
- * - Contains only alphanumeric characters (a-z, A-Z, 0-9)
+ * User ID schema.
+ * Validates that a string matches the format of Supabase Auth user IDs (UUIDs).
  *
  * @example
  * ```ts
  * const schema = z.object({
- *   userId: firestoreUserIdSchema,
+ *   userId: userIdSchema,
  * });
  * ```
  */
-export const firestoreUserIdSchema = z.string().regex(/^[a-zA-Z0-9]{28}$/, {
-  message: "Invalid Firestore user ID",
+export const userIdSchema = z.uuid({
+  message: "Invalid user ID",
 });

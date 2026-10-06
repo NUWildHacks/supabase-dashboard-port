@@ -1,17 +1,30 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
 import { revalidatePath } from "next/cache";
 
-import { USERS_COLLECTION, LOGIN_PATH, DASHBOARD_SETTINGS_PATH } from "@/constants";
-import { getAuthenticatedUser, getConfigDocSnapshot } from "@/lib";
-import type { ActionResult, WildHacksConfig } from "@/types";
+import supabaseAdmin from "@/config/supabase-admin";
+import { ADMIN, DASHBOARD_SETTINGS_PATH, JUDGE, JUDGE_AND_MENTOR, LOGIN_PATH, USERS_TABLE } from "@/constants";
+import { getAuthenticatedUser, getConfig } from "@/lib/server";
+import type { ActionResult, User } from "@/types";
 
 import {
+  editAdminProfileFormSchema,
   EditAdminProfileFormSchema,
+  editJudgeMentorProfileFormSchema,
   EditJudgeMentorProfileFormSchema,
+  editParticipantProfileFormSchema,
   EditParticipantProfileFormSchema,
 } from "../_schemas/edit-profile-form.schemas";
+
+/**
+ * The profile form schema for each role. Parsing with it keeps only the fields that role may edit,
+ * so a crafted request cannot change `role`, `id`, `email`, or other columns.
+ */
+const getProfileSchema = (role: User["role"]) => {
+  if (role === ADMIN) return editAdminProfileFormSchema;
+  if (role === JUDGE || role === JUDGE_AND_MENTOR) return editJudgeMentorProfileFormSchema;
+  return editParticipantProfileFormSchema;
+};
 
 export type EditProfileResult<
   T extends EditParticipantProfileFormSchema | EditAdminProfileFormSchema | EditJudgeMentorProfileFormSchema,
@@ -22,12 +35,10 @@ export const editProfile = async <
 >(
   data: T
 ): Promise<EditProfileResult<T>> => {
-  const db = getFirestore();
   const now = Date.now();
 
   try {
-    const configDocSnapshot = await getConfigDocSnapshot();
-    const { end_time } = configDocSnapshot.data() as WildHacksConfig;
+    const { end_time } = await getConfig();
 
     if (now >= end_time) {
       return {
@@ -37,15 +48,21 @@ export const editProfile = async <
     }
 
     const redirectPath = `${LOGIN_PATH}?redirect=${encodeURIComponent(DASHBOARD_SETTINGS_PATH)}`;
-    const { id: userId } = await getAuthenticatedUser(redirectPath);
+    const { id: userId, role } = await getAuthenticatedUser(redirectPath);
 
-    await db
-      .collection(USERS_COLLECTION)
-      .doc(userId)
+    const parsed = getProfileSchema(role).safeParse(data);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid profile data" };
+    }
+
+    await supabaseAdmin
+      .from(USERS_TABLE)
       .update({
-        ...data,
+        ...parsed.data,
         updated_at: now,
-      });
+      })
+      .eq("id", userId)
+      .throwOnError();
 
     revalidatePath(DASHBOARD_SETTINGS_PATH);
 

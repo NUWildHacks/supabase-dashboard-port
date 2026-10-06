@@ -1,13 +1,8 @@
-"use server";
+import "server-only";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import {
-  CROWD_FAVORITES_COLLECTION,
-  CROWD_FAVORITE_VOTES_SUBCOLLECTION,
-  PARTICIPANT,
-  USERS_COLLECTION,
-} from "@/constants";
+import supabaseAdmin from "@/config/supabase-admin";
+import { CROWD_FAVORITES_TABLE, CROWD_FAVORITE_VOTES_TABLE, PARTICIPANT, USERS_TABLE } from "@/constants";
+import { fromRow, fromRows, selectAllRows } from "@/lib";
 import type { CrowdFavoriteProject, ParticipantUser } from "@/types";
 
 type CrowdFavoriteProjectWithVotes = CrowdFavoriteProject & {
@@ -15,53 +10,46 @@ type CrowdFavoriteProjectWithVotes = CrowdFavoriteProject & {
 };
 
 const getCrowdFavoriteProject = async (projectId: string): Promise<CrowdFavoriteProject | null> => {
-  const db = getFirestore();
+  const { data } = await supabaseAdmin
+    .from(CROWD_FAVORITES_TABLE)
+    .select()
+    .eq("id", projectId)
+    .maybeSingle()
+    .throwOnError();
+  if (!data) return null;
 
-  const projectDocSnapshot = await db.collection(CROWD_FAVORITES_COLLECTION).doc(projectId).get();
-  if (!projectDocSnapshot.exists) return null;
-
-  return {
-    id: projectDocSnapshot.id,
-    ...(projectDocSnapshot.data() as Omit<CrowdFavoriteProject, "id">),
-  };
+  return fromRow<CrowdFavoriteProject>(data);
 };
 
 const getCrowdFavoriteProjectForUser = async (userId: string): Promise<CrowdFavoriteProject | null> => {
-  const db = getFirestore();
-
-  const snap = await db
-    .collection(CROWD_FAVORITES_COLLECTION)
-    .where("team_member_ids", "array-contains", userId)
+  const { data } = await supabaseAdmin
+    .from(CROWD_FAVORITES_TABLE)
+    .select()
+    .contains("team_member_ids", [userId])
+    .order("created_at")
+    .order("id")
     .limit(1)
-    .get();
-  if (snap.empty) return null;
+    .maybeSingle()
+    .throwOnError();
+  if (!data) return null;
 
-  const doc = snap.docs[0];
-  return { id: doc.id, ...(doc.data() as Omit<CrowdFavoriteProject, "id">) };
+  return fromRow<CrowdFavoriteProject>(data);
 };
 
 const getAllParticipantUsers = async (): Promise<ParticipantUser[]> => {
-  const db = getFirestore();
+  const data = await selectAllRows((from, to) =>
+    supabaseAdmin.from(USERS_TABLE).select().eq("role", PARTICIPANT).order("id").range(from, to).throwOnError()
+  );
 
-  const participantDocSnapshots = await db.collection(USERS_COLLECTION).where("role", "==", PARTICIPANT).get();
-
-  return participantDocSnapshots.docs
-    .filter((doc) => doc.data().first_name)
-    .map((doc) => ({
-      id: doc.id,
-      ...(doc.data() as Omit<ParticipantUser, "id">),
-    }));
+  return fromRows<ParticipantUser>(data).filter((user) => user.first_name);
 };
 
 const getAllCrowdFavoriteProjects = async (): Promise<CrowdFavoriteProject[]> => {
-  const db = getFirestore();
+  const data = await selectAllRows((from, to) =>
+    supabaseAdmin.from(CROWD_FAVORITES_TABLE).select().order("id").range(from, to).throwOnError()
+  );
 
-  const crowdFavoriteDocSnapshots = await db.collection(CROWD_FAVORITES_COLLECTION).get();
-
-  return crowdFavoriteDocSnapshots.docs.map((doc) => ({
-    id: doc.id,
-    ...(doc.data() as Omit<CrowdFavoriteProject, "id">),
-  }));
+  return fromRows<CrowdFavoriteProject>(data);
 };
 
 const getCrowdFavoriteProjectsWithVoteCount = async (
@@ -77,23 +65,19 @@ const getCrowdFavoriteProjectsWithVoteCount = async (
       .sort((a, b) => a.created_at - b.created_at);
   }
 
-  const db = getFirestore();
-
-  const projectVoteCounts = await Promise.all(
-    projects.map(async (project) => {
-      const voteSnapshot = await db
-        .collection(CROWD_FAVORITES_COLLECTION)
-        .doc(project.id)
-        .collection(CROWD_FAVORITE_VOTES_SUBCOLLECTION)
-        .count()
-        .get();
-
-      return {
-        ...project,
-        vote_count: voteSnapshot.data().count,
-      };
-    })
+  // Votes are kept when a user is deleted, but only votes from current users count.
+  const { data: voteCountRows } = await supabaseAdmin.rpc("crowd_favorite_vote_counts").throwOnError();
+  const voteCounts = new Map(
+    ((voteCountRows ?? []) as { crowd_favorite_id: string; vote_count: number }[]).map((row) => [
+      row.crowd_favorite_id,
+      Number(row.vote_count),
+    ])
   );
+
+  const projectVoteCounts = projects.map((project) => ({
+    ...project,
+    vote_count: voteCounts.get(project.id) ?? 0,
+  }));
 
   return projectVoteCounts.sort((a, b) => {
     if (b.vote_count !== a.vote_count) {
@@ -105,17 +89,15 @@ const getCrowdFavoriteProjectsWithVoteCount = async (
 };
 
 const getUserVotedProjectId = async (userId: string): Promise<string | null> => {
-  const db = getFirestore();
-
   try {
-    const voteSnap = await db
-      .collectionGroup(CROWD_FAVORITE_VOTES_SUBCOLLECTION)
-      .where("id", "==", userId)
-      .limit(1)
-      .get();
+    const { data } = await supabaseAdmin
+      .from(CROWD_FAVORITE_VOTES_TABLE)
+      .select("crowd_favorite_id")
+      .eq("user_id", userId)
+      .maybeSingle()
+      .throwOnError();
 
-    if (voteSnap.empty) return null;
-    return voteSnap.docs[0].ref.parent.parent?.id ?? null;
+    return data?.crowd_favorite_id ?? null;
   } catch {
     return null;
   }

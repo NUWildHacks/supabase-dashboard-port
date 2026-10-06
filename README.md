@@ -16,10 +16,10 @@ The WildHacks Dashboard is the comprehensive management system for WildHacks 202
 
 ### Backend & Database
 
-- **Firebase Authentication** - User authentication and session management
-- **Cloud Firestore** - NoSQL database for real-time data
-- **Firebase Admin SDK** - Server-side database operations with elevated privileges
-- **jose** - JSON Web Token (JWT) handling and verification
+- **Supabase Auth** - Google and GitHub sign-in with cookie sessions (`@supabase/ssr`)
+- **Supabase Postgres** - Relational database with row level security (schema in `supabase/migrations/`)
+- **Supabase Storage** - Resume file storage
+- **Supabase Realtime** - Live updates for the schedule and team matching release
 - **Vercel** - Deployment and hosting platform
 
 ### Validation & Forms
@@ -52,7 +52,7 @@ The WildHacks Dashboard is the comprehensive management system for WildHacks 202
 
 - **Node.js**: Version 18 or higher
 - **pnpm**: Version 10.12.1 (specified in `package.json`)
-- **Firebase CLI**: For Firebase project management (optional, for development)
+- **Docker**: For the local Supabase stack (the Supabase CLI is installed as a dev dependency)
 
 ### Installation
 
@@ -69,31 +69,38 @@ The WildHacks Dashboard is the comprehensive management system for WildHacks 202
    pnpm install
    ```
 
-3. Set up environment variables:
+3. Start the local Supabase stack (applies `supabase/migrations/` and `supabase/seed.sql`):
 
-   Create a `.env.local` file in the root directory with the following variables:
+   ```bash
+   pnpm exec supabase start
+   pnpm exec supabase db reset   # re-run migrations and seed at any time
+   ```
+
+   For Google/GitHub sign-in locally, export `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID`,
+   `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET`, `SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID`, and
+   `SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET` before `supabase start`. The OAuth apps must allow the
+   callback `http://127.0.0.1:54321/auth/v1/callback`.
+
+4. Set up environment variables:
+
+   Create a `.env.local` file in the root directory (see `.env.example`). `pnpm exec supabase status` prints the local values:
 
    ```env
-   # Firebase Configuration
-   NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
-   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_auth_domain
-   NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
-   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_storage_bucket
-   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-   NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
-
-   # Firebase Admin SDK (Server-side)
-   FIREBASE_ADMIN_PROJECT_ID=your_project_id
-   FIREBASE_ADMIN_CLIENT_EMAIL=your_client_email
-   FIREBASE_ADMIN_PRIVATE_KEY=your_private_key
+   # Supabase
+   NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
+   SUPABASE_SECRET_KEY=your_secret_key
 
    # Application Environment
    APP_ENV=development
    ```
 
-   **Note**: Contact the project maintainers for access to Firebase credentials.
+   **Note**: Contact the project maintainers for access to the hosted Supabase project.
 
-4. Start the development server:
+   For a hosted project, enable the Google and GitHub providers under Authentication → Providers, and add
+   `https://<your-domain>/auth/callback` to Authentication → URL Configuration → Redirect URLs.
+
+5. Start the development server:
 
    ```bash
    pnpm run dev
@@ -127,12 +134,13 @@ dashboard-2026/
 ├── components/            # Shared React components
 │   ├── form/              # Form-specific components
 │   └── ui/                # ShadCN UI components
-├── config/                # Configuration files (Firebase)
+├── config/                # Supabase clients (browser, server, admin)
 ├── constants/             # Application-wide constants
 ├── hooks/                 # Shared React hooks
 ├── lib/                   # Utility functions and libraries
 ├── types/                 # Shared TypeScript type definitions
-└── data/                  # Static data files (JSON)
+├── data/                  # Static data files (JSON)
+└── supabase/              # Supabase config, SQL migrations, and seed data
 ```
 
 For detailed information about the project structure and development guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).

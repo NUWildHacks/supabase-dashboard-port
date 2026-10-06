@@ -1,10 +1,10 @@
 "use client";
 
-import { getDownloadURL, getStorage, ref } from "firebase/storage";
 import { ChangeEvent, RefObject, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { deleteResume } from "../_actions/delete-resume";
+import { getResumeDownloadUrl } from "../_actions/get-resume-download-url";
 import { uploadResume } from "../_actions/upload-resume";
 
 export type UseResumeUploadReturn = {
@@ -77,12 +77,20 @@ export const useResumeUpload = (fileName?: string): UseResumeUploadReturn => {
   const handleDownloadResume = async () => {
     if (!fileName) return;
 
-    const storage = getStorage();
-    const fileRef = ref(storage, fileName);
+    try {
+      const result = await getResumeDownloadUrl();
+      const { success } = result;
 
-    const url = await getDownloadURL(fileRef);
+      if (!success) {
+        const { error } = result;
+        throw new Error(error);
+      }
 
-    window.open(url, "_blank");
+      window.open(result.url, "_blank");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+      toast.error("Failed to download resume", { description: errorMessage });
+    }
   };
 
   return {

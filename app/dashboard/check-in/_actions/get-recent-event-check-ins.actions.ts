@@ -1,9 +1,9 @@
 "use server";
 
-import { getFirestore } from "firebase-admin/firestore";
-
-import { ADMIN, EVENT_CHECK_INS_COLLECTION, EVENTS_COLLECTION, USERS_COLLECTION } from "@/constants";
-import { getAuthenticatedUser, requireRole } from "@/lib";
+import supabaseAdmin from "@/config/supabase-admin";
+import { ADMIN, EVENT_CHECK_INS_TABLE, EVENTS_TABLE, USERS_TABLE } from "@/constants";
+import { fromRows } from "@/lib";
+import { getAuthenticatedUser, requireRole } from "@/lib/server";
 import type { EventCheckIn, GetEventCheckInsActionResponse, User } from "@/types";
 
 import { getCheckInRedirectPath, WILDHACKS_EVENT_ID } from "./helpers";
@@ -24,8 +24,6 @@ export const getRecentEventCheckIns = async ({
   eventId,
   limitCount,
 }: GetRecentEventCheckInsInput): Promise<GetEventCheckInsActionResponse> => {
-  const db = getFirestore();
-
   try {
     const user = await getAuthenticatedUser(getCheckInRedirectPath());
 
@@ -39,40 +37,36 @@ export const getRecentEventCheckIns = async ({
 
     // Skip event validation for WildHacks main event
     if (normalizedEventId !== WILDHACKS_EVENT_ID) {
-      const eventDocSnapshot = await db.collection(EVENTS_COLLECTION).doc(normalizedEventId).get();
-      if (!eventDocSnapshot.exists) {
+      const { data: event } = await supabaseAdmin
+        .from(EVENTS_TABLE)
+        .select("id")
+        .eq("id", normalizedEventId)
+        .maybeSingle()
+        .throwOnError();
+      if (!event) {
         return { success: false, error: "Selected event does not exist" };
       }
     }
 
-    // Requires a composite index on (event_id ASC, checked_in_at DESC)
-    const checkInsSnapshot = await db
-      .collection(EVENT_CHECK_INS_COLLECTION)
-      .where("event_id", "==", normalizedEventId)
-      .orderBy("checked_in_at", "desc")
+    // Uses the index on (event_id, checked_in_at desc)
+    const { data: checkInRows } = await supabaseAdmin
+      .from(EVENT_CHECK_INS_TABLE)
+      .select()
+      .eq("event_id", normalizedEventId)
+      .order("checked_in_at", { ascending: false })
       .limit(normalizeLimit(limitCount))
-      .get();
+      .throwOnError();
 
-    const rawCheckIns = checkInsSnapshot.docs.map(
-      (doc) =>
-        ({
-          id: doc.id,
-          ...doc.data(),
-        }) as EventCheckIn
-    );
+    const rawCheckIns = fromRows<EventCheckIn>(checkInRows);
 
     const userIds = Array.from(new Set(rawCheckIns.map((checkIn) => checkIn.user_id).filter(Boolean)));
     const usersById = new Map<string, User>();
 
-    await Promise.all(
-      userIds.map(async (userId) => {
-        const userDocSnapshot = await db.collection(USERS_COLLECTION).doc(userId).get();
-        if (!userDocSnapshot.exists) return;
+    if (userIds.length > 0) {
+      const { data: userRows } = await supabaseAdmin.from(USERS_TABLE).select().in("id", userIds).throwOnError();
 
-        const user = { id: userDocSnapshot.id, ...userDocSnapshot.data() } as User;
-        usersById.set(userId, user);
-      })
-    );
+      fromRows<User>(userRows).forEach((user) => usersById.set(user.id, user));
+    }
 
     const checkIns = rawCheckIns.map((checkIn) => {
       const user = usersById.get(checkIn.user_id);

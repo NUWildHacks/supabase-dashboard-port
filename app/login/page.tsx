@@ -1,12 +1,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { DASHBOARD_PATH, ROOT_PATH } from "@/constants";
-import { verifySession } from "@/lib";
+import { verifySession } from "@/lib/server";
 
-import { GithubLoginButton, GoogleLoginButton } from "./_components";
+import { GithubLoginButton, GoogleLoginButton, LoginErrorToast } from "./_components";
 
 const LoginPage = async () => {
   const userInfo = await verifySession();
@@ -14,6 +15,9 @@ const LoginPage = async () => {
 
   return (
     <main className="flex-1 px-6 sm:px-12 flex flex-col justify-center items-center">
+      <Suspense>
+        <LoginErrorToast />
+      </Suspense>
       <div className="max-w-[650px]">
         <Card>
           <CardContent className="flex flex-col items-center gap-6">
