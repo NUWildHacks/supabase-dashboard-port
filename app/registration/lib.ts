@@ -73,9 +73,10 @@ const registerJudgeMentorWithEmail = async (userId: User["id"], userEmail: User[
 
       if (claimed) redirect(DASHBOARD_PATH);
     }
-  } else {
-    await deleteSession();
   }
+  // else {
+  //   await deleteSession();
+  // }
 };
 
 export { registerJudgeMentorWithEmail };

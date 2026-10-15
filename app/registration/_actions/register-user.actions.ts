@@ -50,11 +50,7 @@ export const registerUser = async (
       return { success: false, error: "You are already registered." };
     }
 
-    const { end_time, max_participants } = await getConfig();
-
-    if (now >= end_time) {
-      throw new Error("The event has ended");
-    }
+    const { end_time, max_participants, registration_deadline } = await getConfig();
 
     const { data: emailRows } = await supabaseAdmin
       .from(USERS_TABLE)
@@ -72,6 +68,14 @@ export const registerUser = async (
         success: false,
         error: "This email is already registered. Sign in with the account you used before.",
       };
+    }
+
+    if (now >= registration_deadline * 1000 && !emailRowId) {
+      return { success: false, error: "Registration deadline has passed" };
+    }
+
+    if (now >= end_time) {
+      throw new Error("The event has ended");
     }
 
     // Checks the participant limit, writes the row, and removes the pre-created email row in one

@@ -2,7 +2,7 @@ import "server-only";
 
 import supabaseAdmin from "@/config/supabase-admin";
 import { USERS_TABLE, JUDGE, JUDGE_AND_MENTOR, PARTICIPANT } from "@/constants";
-import { verifySession } from "@/lib/server";
+import { getConfig, verifySession } from "@/lib/server";
 import type { ActionResult } from "@/types";
 
 export const REGISTRATION_CLOSED_MESSAGE = "Registration is closed! Check back in the future for WildHacks 2027.";
@@ -40,8 +40,12 @@ export const checkUserCanLogin = async (): Promise<ActionResult> => {
         .throwOnError();
 
       const role = emailRow?.role;
+
       if (!emailRow || (role !== JUDGE && role !== JUDGE_AND_MENTOR && role !== PARTICIPANT)) {
-        return { success: false, error: REGISTRATION_CLOSED_MESSAGE };
+        const config = await getConfig();
+        if (Date.now() >= config.registration_deadline * 1000) {
+          return { success: false, error: REGISTRATION_CLOSED_MESSAGE };
+        }
       }
     }
 
