@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import { ONE_DAY } from "@/constants";
-
 export const editWildhacksConfigFormSchema = z
   .object({
     max_team_size: z
