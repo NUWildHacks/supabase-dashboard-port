@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { combineDateAndTime, millisecondsToDate, millisecondsToTime } from "@/lib";
 
+import { YEARS_BEFORE_CURRENT, YEARS_AFTER_CURRENT } from "@/constants/time.constants"
+
 type DateTimePickerProps<T extends FieldValues = FieldValues> = {
   label: string;
   fieldName: string;
@@ -22,6 +24,11 @@ const DateTimePicker = <T extends FieldValues>({ label, fieldName, field, fieldS
   const { value } = field;
   const date = millisecondsToDate(value);
   const time = millisecondsToTime(value);
+
+  const currentYear = new Date().getFullYear();
+  const selectedYear = date?.getFullYear() ?? currentYear;
+  const startMonth = new Date(Math.min(currentYear - YEARS_BEFORE_CURRENT, selectedYear), 0);
+  const endMonth = new Date(Math.max(currentYear + YEARS_AFTER_CURRENT, selectedYear), 11);
 
   return (
     <Field data-invalid={fieldState.invalid}>
@@ -47,6 +54,8 @@ const DateTimePicker = <T extends FieldValues>({ label, fieldName, field, fieldS
                 mode="single"
                 selected={date}
                 captionLayout="dropdown"
+                startMonth={startMonth}
+                endMonth={endMonth}
                 onSelect={(selectedDate) => {
                   if (selectedDate) {
                     const newValue = combineDateAndTime(selectedDate, time || "00:00");

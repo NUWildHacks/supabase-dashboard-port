@@ -6,6 +6,9 @@ export const ONE_HOUR = 1000 * 60 * 60;
 export const ONE_DAY = 1000 * 60 * 60 * 24;
 export const ONE_WEEK = 1000 * 60 * 60 * 24 * 7;
 
+export const YEARS_BEFORE_CURRENT = 1;
+export const YEARS_AFTER_CURRENT = 1;
+
 export const MONTH_ABBREVIATIONS = [
   "Jan",
   "Feb",
