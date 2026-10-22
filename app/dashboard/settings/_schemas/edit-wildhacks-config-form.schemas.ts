@@ -48,10 +48,6 @@ export const editWildhacksConfigFormSchema = z
     message: "Start time must be before end time",
     path: ["end_time"],
   })
-  .refine((data) => data.end_time - data.start_time >= ONE_DAY, {
-    message: "Event duration must be at least one day",
-    path: ["end_time"],
-  })
   .refine((data) => data.crowd_favorite_opt_in_started || !data.crowd_favorite_opt_in_open, {
     message: "Crowd favorite opt-in cannot be open before it has started",
     path: ["crowd_favorite_opt_in_open"],
