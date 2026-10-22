@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { combineDateAndTime, millisecondsToDate, millisecondsToTime } from "@/lib";
 
-import { YEARS_BEFORE_CURRENT, YEARS_AFTER_CURRENT } from "@/constants/time.constants"
+import { YEARS_BEFORE_CURRENT, YEARS_AFTER_CURRENT } from "@/constants/time.constants";
 
 type DateTimePickerProps<T extends FieldValues = FieldValues> = {
   label: string;
