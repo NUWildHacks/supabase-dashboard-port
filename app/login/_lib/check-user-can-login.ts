@@ -43,7 +43,7 @@ export const checkUserCanLogin = async (): Promise<ActionResult> => {
 
       if (!emailRow || (role !== JUDGE && role !== JUDGE_AND_MENTOR && role !== PARTICIPANT)) {
         const config = await getConfig();
-        if (Date.now() >= config.registration_deadline * 1000) {
+        if (Date.now() >= config.registration_deadline) {
           return { success: false, error: REGISTRATION_CLOSED_MESSAGE };
         }
       }

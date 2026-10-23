@@ -70,7 +70,7 @@ export const registerUser = async (
       };
     }
 
-    if (now >= registration_deadline * 1000 && !emailRowId) {
+    if (now >= registration_deadline && !emailRowId) {
       return { success: false, error: "Registration deadline has passed" };
     }
 
